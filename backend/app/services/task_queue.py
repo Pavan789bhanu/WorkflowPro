@@ -10,6 +10,8 @@ from typing import Dict, Optional, Callable, Any
 from datetime import datetime, timezone
 from enum import Enum
 
+from app.automation.utils.logger import log
+
 
 class TaskStatus(Enum):
     """Status of a task in the queue."""
@@ -88,8 +90,8 @@ class ConcurrentTaskQueue:
             self._execute_task(task_info)
         )
         
-        print(f"[TASK QUEUE] Added task {task_id} to queue")
-        print(f"[TASK QUEUE] Current tasks: {len(self.tasks)}, Running: {self.get_running_count()}")
+        log(f"[TASK QUEUE] Added task {task_id} to queue")
+        log(f"[TASK QUEUE] Current tasks: {len(self.tasks)}, Running: {self.get_running_count()}")
         
         return task_id
     
@@ -108,30 +110,30 @@ class ConcurrentTaskQueue:
                 # Update status to running
                 task_info.status = TaskStatus.RUNNING
                 task_info.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                print(f"[TASK QUEUE] Starting task {task_id}")
+                log(f"[TASK QUEUE] Starting task {task_id}")
                 
                 # Execute the task
                 try:
                     result = await task_info.task_func(*task_info.args, **task_info.kwargs)
                     task_info.result = result
                     task_info.status = TaskStatus.COMPLETED
-                    print(f"[TASK QUEUE] Task {task_id} completed successfully")
+                    log(f"[TASK QUEUE] Task {task_id} completed successfully")
                     
                 except asyncio.CancelledError:
                     task_info.status = TaskStatus.CANCELLED
-                    print(f"[TASK QUEUE] Task {task_id} was cancelled")
+                    log(f"[TASK QUEUE] Task {task_id} was cancelled")
                     raise
                     
                 except Exception as e:
                     task_info.status = TaskStatus.FAILED
                     task_info.error = str(e)
-                    print(f"[TASK QUEUE] Task {task_id} failed: {e}")
+                    log(f"[TASK QUEUE] Task {task_id} failed: {e}")
                     
                 finally:
                     task_info.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     
         except Exception as e:
-            print(f"[TASK QUEUE] Error executing task {task_id}: {e}")
+            log(f"[TASK QUEUE] Error executing task {task_id}: {e}")
             task_info.status = TaskStatus.FAILED
             task_info.error = str(e)
             task_info.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -213,7 +215,7 @@ class ConcurrentTaskQueue:
             task_info.task.cancel()
             task_info.status = TaskStatus.CANCELLED
             task_info.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            print(f"[TASK QUEUE] Cancelled task {task_id}")
+            log(f"[TASK QUEUE] Cancelled task {task_id}")
             return True
         
         return False
@@ -240,7 +242,7 @@ class ConcurrentTaskQueue:
                 del self.tasks[task_id]
             
             if to_remove:
-                print(f"[TASK QUEUE] Cleaned up {len(to_remove)} old tasks")
+                log(f"[TASK QUEUE] Cleaned up {len(to_remove)} old tasks")
     
     async def wait_for_task(self, task_id: str, timeout: Optional[float] = None) -> Optional[Any]:
         """
@@ -266,10 +268,10 @@ class ConcurrentTaskQueue:
             return task_info.result
             
         except asyncio.TimeoutError:
-            print(f"[TASK QUEUE] Timeout waiting for task {task_id}")
+            log(f"[TASK QUEUE] Timeout waiting for task {task_id}")
             return None
         except asyncio.CancelledError:
-            print(f"[TASK QUEUE] Task {task_id} was cancelled while waiting")
+            log(f"[TASK QUEUE] Task {task_id} was cancelled while waiting")
             return None
     
     def get_stats(self) -> Dict[str, Any]:
