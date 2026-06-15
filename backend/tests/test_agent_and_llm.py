@@ -107,7 +107,7 @@ class TestAgentHelpers:
                 raise RuntimeError("no network")
 
         agent = AutomationAgent(llm=_BoomLLM())
-        plan = asyncio.get_event_loop().run_until_complete(
+        plan = asyncio.run(
             agent._make_plan("do something", "https://example.com")
         )
         assert plan["start_url"] == "https://example.com"
@@ -127,7 +127,7 @@ class TestReportFallback:
                 raise RuntimeError("boom")
 
         agent = AutomationAgent(llm=_BoomLLM())
-        report = asyncio.get_event_loop().run_until_complete(
+        report = asyncio.run(
             agent._write_report("task", True, "done", [], [], "https://x.com")
         )
         assert "# Automation Report" in report
