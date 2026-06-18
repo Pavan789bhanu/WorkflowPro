@@ -53,6 +53,8 @@ storage_state.json
 # dataset_output/
 # **/captured_dataset/
 # **/dataset_output/
+# Runtime learning data mutated by the feedback API during test runs
+backend/captured_dataset/workflow_knowledge.json
 
 # -----------------------------
 # Logs / Reports / Debug Dumps

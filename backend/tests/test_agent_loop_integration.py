@@ -179,7 +179,7 @@ def test_agent_full_loop(agent):
         events.append(e)
 
     agent.on_event = capture
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         agent.run("Summarize the top story on example.com")
     )
 
@@ -235,7 +235,7 @@ def test_agent_fail_action(agent):
             return {"action": "fail", "reason": "CAPTCHA blocks the page"}
 
     agent._llm = FailingLLM()
-    result = asyncio.get_event_loop().run_until_complete(agent.run("impossible task"))
+    result = asyncio.run(agent.run("impossible task"))
     assert result.success is False
     assert "CAPTCHA" in result.final_message
 
@@ -259,7 +259,7 @@ def test_no_effect_click_is_failure_and_loop_hard_stops(agent):
     llm = StubbornLLM()
     agent._llm = llm
     # FakePage.click never changes _dom_len → page_changed stays False.
-    result = asyncio.get_event_loop().run_until_complete(agent.run("read the top story"))
+    result = asyncio.run(agent.run("read the top story"))
 
     assert result.success is False
     assert "Stopped early" in result.final_message
@@ -299,7 +299,7 @@ def test_query_rewriting_flows_through(agent):
             return {"action": "done", "reason": "complete"}
 
     agent._llm = RewritingLLM()
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         agent.run("find agentic comunication articles")  # vague + typo
     )
     assert result.success is True
@@ -314,7 +314,7 @@ def test_plan_rewrite_defaults_to_original_task():
             raise RuntimeError("offline")
 
     agent = AutomationAgent(llm=BoomLLM(), use_storage_state=False)
-    plan = asyncio.get_event_loop().run_until_complete(
+    plan = asyncio.run(
         agent._make_plan("original query", None)
     )
     assert plan["rewritten_task"] == "original query"
@@ -336,7 +336,7 @@ def test_captcha_challenge_fail_fast(agent):
     llm = ClickyLLM()
     agent._llm = llm
     agent._test_page.challenge = "verification text: \"verify you are human\""
-    result = asyncio.get_event_loop().run_until_complete(agent.run("read articles"))
+    result = asyncio.run(agent.run("read articles"))
 
     assert result.success is False
     assert "verification" in result.final_message.lower() or "challenge" in result.final_message.lower()
@@ -361,7 +361,7 @@ def test_progress_watchdog_stops_modal_churn(agent):
     llm = ModalChurnLLM()
     agent._llm = llm
     agent._test_page.dom_toggles_on_click = True
-    result = asyncio.get_event_loop().run_until_complete(agent.run("read articles"))
+    result = asyncio.run(agent.run("read articles"))
 
     assert result.success is False
     assert "no real progress" in result.final_message.lower()
@@ -425,7 +425,7 @@ def test_multi_page_research_run_not_killed(agent):
             return self.script.pop(0)
 
     agent._llm = ResearchLLM()
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         agent.run("research agent-to-agent communication articles")
     )
     assert result.success is True
@@ -449,7 +449,7 @@ def test_duplicate_extract_rejected_with_guidance(agent):
             return {"action": "done", "reason": "have the data"}
 
     agent._llm = ReExtractLLM()
-    result = asyncio.get_event_loop().run_until_complete(agent.run("read the article"))
+    result = asyncio.run(agent.run("read the article"))
     assert result.success is True
     assert len(result.extracted) == 1  # duplicate was rejected
     dup_step = result.steps[-1]
@@ -473,7 +473,7 @@ def test_early_stop_with_data_is_partial_success(agent):
                     "step_title": "Click dead link", "reason": "stuck"}
 
     agent._llm = ExtractThenStuckLLM()
-    result = asyncio.get_event_loop().run_until_complete(agent.run("research task"))
+    result = asyncio.run(agent.run("research task"))
     assert "Stopped early" in result.final_message
     assert result.success is True          # data exists → partial success
     assert len(result.extracted) == 1
