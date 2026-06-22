@@ -5,6 +5,7 @@ Execution row, broadcasts real-time progress over the app WebSocket, and writes
 an HTML report (with screenshots) served by /api/executions/{id}/report.
 """
 
+import base64
 import html
 import json
 import re
@@ -73,7 +74,6 @@ def _write_html_report(result: AgentResult, workflow_name: str) -> Optional[str]
 
     # Inline screenshots as data URIs → the report is fully self-contained
     # (no extra authenticated requests needed when viewed in an iframe).
-    import base64
     shots = []
     for step in result.steps:
         if step.screenshot_path and Path(step.screenshot_path).exists():

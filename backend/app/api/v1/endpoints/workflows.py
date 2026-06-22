@@ -16,6 +16,9 @@ from app.automation.utils.logger import log
 
 router = APIRouter()
 
+# Module-level singleton — avoids rebuilding blocked-IP-range objects on every request.
+_ssrf = SSRFProtector()
+
 
 def _workflow_to_response(
     workflow: WorkflowModel,
@@ -103,8 +106,7 @@ def create_workflow(
     
     # Validate start_url for SSRF (if provided)
     if workflow_data.get('start_url'):
-        ssrf_protector = SSRFProtector()
-        is_valid, error_msg = ssrf_protector.validate_url(workflow_data['start_url'])
+        is_valid, error_msg = _ssrf.validate_url(workflow_data['start_url'])
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"Invalid start_url: {error_msg}")
     
@@ -184,8 +186,7 @@ def update_workflow(
     update_data = workflow.model_dump(exclude_unset=True)
 
     if 'start_url' in update_data and update_data['start_url']:
-        ssrf_protector = SSRFProtector()
-        is_valid, error_msg = ssrf_protector.validate_url(update_data['start_url'])
+        is_valid, error_msg = _ssrf.validate_url(update_data['start_url'])
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"Invalid start_url: {error_msg}")
 
