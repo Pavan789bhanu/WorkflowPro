@@ -7,6 +7,7 @@ import re
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel
 from app.services.video_learning_service import video_learning_service
+from app.automation.utils.logger import log
 
 
 # Common app name to URL mappings - Canonical entry points for well-known apps
@@ -422,8 +423,6 @@ class AIService:
         Returns:
             App name mentioned by user or derived from URL
         """
-        description.lower()
-        
         # Try to extract app name explicitly mentioned in description
         # Look for capitalized words after prepositions (indicates proper nouns)
         patterns = [
@@ -575,7 +574,7 @@ class AIService:
             try:
                 return await self._call_llm_parse(description, target_url, context)
             except Exception as e:
-                print(f"[AI Service] LLM call failed: {e}, falling back to rule-based parser")
+                log(f"[AI Service] LLM call failed: {e}, falling back to rule-based parser", level="warning")
 
         return self._mock_parse(description, target_url)
 
@@ -672,14 +671,15 @@ Workflow best practices:
         if use_video_examples:
             try:
                 import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # If loop is running, we can't use await, so create task
+                try:
+                    asyncio.get_running_loop()
+                    # Running inside an async context — call the sync fallback
+                    # to avoid blocking the event loop. A future refactor should
+                    # make _build_prompt itself async.
                     enhanced_prompt = video_learning_service.generate_enhanced_prompt(description, num_examples=3)
-                    # For now, fallback to sync if in running loop
-                    # In production, this would be refactored to be fully async
-                else:
-                    enhanced_prompt = loop.run_until_complete(
+                except RuntimeError:
+                    # No running loop — safe to call run_until_complete.
+                    enhanced_prompt = asyncio.run(
                         video_learning_service.generate_enhanced_prompt(description, num_examples=3)
                     )
                 
@@ -692,8 +692,8 @@ Workflow best practices:
                 
                 return enhanced_prompt
             except Exception as e:
-                print(f"[VIDEO LEARNING] Error generating video-enhanced prompt: {e}")
-                print("[VIDEO LEARNING] Falling back to standard prompt")
+                log(f"[VIDEO LEARNING] Error generating video-enhanced prompt: {e}", level="warning")
+                log("[VIDEO LEARNING] Falling back to standard prompt", level="warning")
                 # Fall through to standard prompt
         
         # Standard prompt (fallback or when video examples disabled)

@@ -1,27 +1,26 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 from app.core.config import settings
 
-# Configure bcrypt with proper settings
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__default_rounds=12
-)
+_BCRYPT_ROUNDS = 12
+_BCRYPT_MAX_BYTES = 72  # bcrypt silently truncates at 72 bytes
+
+
+def _encode_password(password: str) -> bytes:
+    """UTF-8 encode a password, truncated to bcrypt's 72-byte limit."""
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # Truncate password to 72 bytes (bcrypt limitation)
-    if isinstance(plain_password, str):
-        plain_password = plain_password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.verify(plain_password, hashed_password)
+    """Return True if *plain_password* matches the stored bcrypt hash."""
+    return bcrypt.checkpw(_encode_password(plain_password), hashed_password.encode("utf-8"))
+
 
 def get_password_hash(password: str) -> str:
-    # Truncate password to 72 bytes (bcrypt limitation)
-    if isinstance(password, str):
-        password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.hash(password)
+    """Return a bcrypt hash of *password* (cost factor 12)."""
+    return bcrypt.hashpw(_encode_password(password), bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)).decode("utf-8")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
