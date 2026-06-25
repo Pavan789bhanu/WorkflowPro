@@ -275,16 +275,20 @@ class ConcurrentTaskQueue:
             return None
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get queue statistics."""
+        """Get queue statistics (single pass over tasks)."""
+        counts: Dict[str, int] = {s.value: 0 for s in TaskStatus}
+        for task_info in self.tasks.values():
+            counts[task_info.status.value] += 1
+        running = counts[TaskStatus.RUNNING.value]
         return {
             "total_tasks": len(self.tasks),
-            "queued": self.get_queued_count(),
-            "running": self.get_running_count(),
-            "completed": sum(1 for t in self.tasks.values() if t.status == TaskStatus.COMPLETED),
-            "failed": sum(1 for t in self.tasks.values() if t.status == TaskStatus.FAILED),
-            "cancelled": sum(1 for t in self.tasks.values() if t.status == TaskStatus.CANCELLED),
+            "queued": counts[TaskStatus.QUEUED.value],
+            "running": running,
+            "completed": counts[TaskStatus.COMPLETED.value],
+            "failed": counts[TaskStatus.FAILED.value],
+            "cancelled": counts[TaskStatus.CANCELLED.value],
             "max_concurrent": self.max_concurrent,
-            "available_slots": self.max_concurrent - self.get_running_count()
+            "available_slots": self.max_concurrent - running,
         }
 
 
