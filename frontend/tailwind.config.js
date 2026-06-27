@@ -47,9 +47,9 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['Cal Sans', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        sans: ['Fira Sans', 'system-ui', 'sans-serif'],
+        display: ['Fira Code', 'monospace'],
+        mono: ['Fira Code', 'monospace'],
       },
       spacing: {
         '4.5': '1.125rem',

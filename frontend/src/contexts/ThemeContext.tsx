@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
 type Theme = 'light' | 'dark' | 'midnight';
@@ -22,45 +22,53 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+function usePersisted<T extends string | boolean>(key: string, initial: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    const saved = localStorage.getItem(key);
+    if (saved === null) return initial;
+    if (typeof initial === 'boolean') return (saved === 'true') as T;
+    return saved as T;
+  });
+  const set = (v: T) => {
+    setValue(v);
+    localStorage.setItem(key, String(v));
+  };
+  return [value, set];
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('theme');
-    return (saved as Theme) || 'midnight';
-  });
-  const [effectsEnabled, setEffectsEnabled] = useState(() => {
-    const saved = localStorage.getItem('effectsEnabled');
-    return saved !== 'false';
-  });
-  const [accentColor, setAccentColor] = useState<AccentColor>(() => {
-    const saved = localStorage.getItem('accentColor');
-    return (saved as AccentColor) || 'indigo';
-  });
-  const [fontSize, setFontSize] = useState<FontSize>(() => {
-    const saved = localStorage.getItem('fontSize');
-    return (saved as FontSize) || 'medium';
-  });
-  const [reducedMotion, setReducedMotion] = useState(() => {
-    const saved = localStorage.getItem('reducedMotion');
-    return saved === 'true';
-  });
-  const [compactMode, setCompactMode] = useState(() => {
-    const saved = localStorage.getItem('compactMode');
-    return saved === 'true';
-  });
-  const [isLoaded] = useState(true);
+  // Aurora light is the new default look; dark/midnight remain available.
+  const [theme, setTheme] = usePersisted<Theme>('theme', 'light');
+  const [effectsEnabled, setEffectsEnabled] = usePersisted<boolean>('effectsEnabled', true);
+  const [accentColor, setAccentColor] = usePersisted<AccentColor>('accentColor', 'indigo');
+  const [fontSize, setFontSize] = usePersisted<FontSize>('fontSize', 'medium');
+  const [reducedMotion, setReducedMotion] = usePersisted<boolean>('reducedMotion', false);
+  const [compactMode, setCompactMode] = usePersisted<boolean>('compactMode', false);
+
+  // Actually apply the choices to the DOM (previously the settings were
+  // stored but never wired to anything — themes silently did nothing).
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+    root.setAttribute('data-accent', accentColor);
+    root.setAttribute('data-font-size', fontSize);
+    root.toggleAttribute('data-no-effects', !effectsEnabled);
+    root.toggleAttribute('data-reduced-motion', reducedMotion);
+    root.toggleAttribute('data-compact', compactMode);
+  }, [theme, accentColor, fontSize, effectsEnabled, reducedMotion, compactMode]);
 
   return (
-    <ThemeContext.Provider value={{ 
-      theme, setTheme, 
-      effectsEnabled, setEffectsEnabled,
-      accentColor, setAccentColor,
-      fontSize, setFontSize,
-      reducedMotion, setReducedMotion,
-      compactMode, setCompactMode
-    }}>
-      <div className={isLoaded ? 'animate-fade-in-up' : 'opacity-0'}>
-        {children}
-      </div>
+    <ThemeContext.Provider
+      value={{
+        theme, setTheme,
+        effectsEnabled, setEffectsEnabled,
+        accentColor, setAccentColor,
+        fontSize, setFontSize,
+        reducedMotion, setReducedMotion,
+        compactMode, setCompactMode,
+      }}
+    >
+      {children}
     </ThemeContext.Provider>
   );
 }

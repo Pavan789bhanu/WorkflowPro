@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+captured_dataset/
+browser_session_data/
+storage_state.json
+*.log
+tests/
+test_*.py
+.pytest_cache/
+HEALTH_CHECK_REPORT.md
+*.md

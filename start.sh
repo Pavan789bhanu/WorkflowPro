@@ -14,25 +14,27 @@ echo ""
 # ── Environment setup ──────────────────────────────────────────────────────
 
 if [ ! -f "$ROOT/.env" ]; then
-  if [ -f "$ROOT/.env.example" ]; then
-    echo "📝 No .env found — copying .env.example → .env"
-    cp "$ROOT/.env.example" "$ROOT/.env"
-  else
     echo "📝 No .env found — creating template at $ROOT/.env"
     cat > "$ROOT/.env" <<'EOF'
 # Required
 SECRET_KEY=change_me_use_openssl_rand_hex_32
-OPENAI_API_KEY=sk-...
+
+# LLM provider — set at least ONE key. LLM_PROVIDER: auto | openai | anthropic
+LLM_PROVIDER=auto
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+OPENAI_MODEL=gpt-4o
+ANTHROPIC_MODEL=claude-sonnet-4-5
 
 # Optional
-LLM_MODEL=gpt-4o
 ENVIRONMENT=development
 DEBUG=true
 DEFAULT_HEADLESS=true
 RATE_LIMIT_PER_MINUTE=60
+AGENT_MAX_STEPS=25
+AGENT_MAX_CONSECUTIVE_FAILURES=5
 EOF
-  fi
-  echo "⚠️  Please edit .env and set SECRET_KEY + OPENAI_API_KEY, then re-run."
+  echo "⚠️  Please edit .env and set SECRET_KEY + an LLM API key (OpenAI or Anthropic), then re-run."
   exit 1
 fi
 

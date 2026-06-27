@@ -15,7 +15,13 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 
 # Test database setup
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+import os
+import tempfile
+
+# Keep the test DB in a temp dir — avoids littering the repo and works on
+# network-mounted filesystems where SQLite locking can fail.
+_TEST_DB = os.path.join(tempfile.mkdtemp(prefix='workflowpro_test_'), 'test.db')
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{_TEST_DB}"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -427,8 +433,13 @@ class TestConfiguration:
         assert hasattr(settings, 'MAX_ADAPTIVE_CYCLES')
         
         assert settings.LOOP_DETECTION_WINDOW == 6
-        assert settings.MAX_INACTIVITY_SECONDS == 30
+        # Default raised 30s -> 90s: a single LLM decision can take 20-30s,
+        # so 30s caused spurious inactivity timeouts mid-run.
+        assert settings.MAX_INACTIVITY_SECONDS >= 30
         assert settings.MAX_ADAPTIVE_CYCLES == 6
+        # New agent settings
+        assert settings.AGENT_MAX_STEPS >= 1
+        assert settings.active_llm_provider in ("openai", "anthropic", "none")
     
     def test_ssrf_configuration(self):
         """Test SSRF protection configuration."""
@@ -443,3 +454,40 @@ class TestConfiguration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+class TestExecutionFeedback:
+    """User feedback on executions feeds the learning system."""
+
+    def test_feedback_recorded_on_execution(self, client, auth_headers, db, test_user):
+        from app.models.models import Workflow as WF, Execution as EX, ExecutionStatus
+        import json as _json
+
+        wf = WF(name="fb-wf", app_name="example", description="task",
+                owner_id=test_user.id, start_url="https://example.com")
+        db.add(wf)
+        db.commit()
+        db.refresh(wf)
+        ex = EX(workflow_id=wf.id, status=ExecutionStatus.SUCCESS,
+                result=_json.dumps({"task": "task", "final_url": "https://example.com/x"}))
+        db.add(ex)
+        db.commit()
+        db.refresh(ex)
+
+        r = client.post(f"/api/executions/{ex.id}/feedback",
+                        json={"rating": "negative", "notes": "missed the banner"},
+                        headers=auth_headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["rating"] == "negative"
+
+        db.refresh(ex)
+        stored = _json.loads(ex.result)
+        assert stored["user_feedback"]["rating"] == "negative"
+        assert stored["user_feedback"]["notes"] == "missed the banner"
+
+    def test_feedback_requires_auth_and_validates(self, client, auth_headers):
+        r = client.post("/api/executions/999/feedback", json={"rating": "positive"})
+        assert r.status_code == 401
+        r = client.post("/api/executions/999/feedback",
+                        json={"rating": "meh"}, headers=auth_headers)
+        assert r.status_code == 422  # invalid rating value

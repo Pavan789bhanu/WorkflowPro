@@ -1,188 +1,100 @@
-import { Home, Workflow, Activity, TrendingUp, Settings, ChevronRight, LogOut, User, FlaskConical } from 'lucide-react';
+/**
+ * Dock — floating glass navigation rail (Aurora Glass design system).
+ * Replaces the old full-height solid sidebar.
+ */
+import { Home, Workflow, Activity, TrendingUp, Settings, FlaskConical, LogOut, Sparkles } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useRipple } from '../../hooks/useRipple';
 import { useAuth } from '../../contexts/AuthContext';
-import { useState, useEffect, useRef } from 'react';
+
+const NAV_ITEMS = [
+  { icon: Home, label: 'Home', path: '/dashboard' },
+  { icon: FlaskConical, label: 'Playground', path: '/playground' },
+  { icon: Workflow, label: 'Workflows', path: '/workflows' },
+  { icon: Activity, label: 'Executions', path: '/executions' },
+  { icon: TrendingUp, label: 'Analytics', path: '/analytics' },
+  { icon: Settings, label: 'Settings', path: '/settings' },
+];
 
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
-  const createRipple = useRipple();
-  const { logout } = useAuth();
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const profileRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
-        setShowProfileMenu(false);
-      }
-    }
-
-    if (showProfileMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showProfileMenu]);
-
-  const navItems = [
-    { icon: Home, label: 'Overview', path: '/' },
-    { icon: Workflow, label: 'Workflows', path: '/workflows' },
-    { icon: Activity, label: 'Executions', path: '/executions' },
-    { icon: FlaskConical, label: 'Playground', path: '/playground' },
-    { icon: TrendingUp, label: 'Analytics', path: '/analytics' },
-    { icon: Settings, label: 'Settings', path: '/settings' },
-  ];
+  const { logout, user } = useAuth();
 
   return (
-    <div 
-      style={{ 
-        backgroundColor: 'rgb(var(--bg-secondary))', 
-        borderColor: 'rgb(var(--border-color))',
-        backdropFilter: 'blur(20px)'
-      }} 
-      className="w-72 border-r flex flex-col h-screen animate-slide-in-left shadow-xl" 
-      role="navigation" 
+    <aside
+      className="glass-card fixed left-4 top-4 bottom-4 z-40 w-[72px] xl:w-56 flex flex-col py-4 transition-all duration-300"
+      role="navigation"
       aria-label="Main navigation"
     >
-      {/* Enhanced Logo */}
-      <div style={{ borderColor: 'rgb(var(--border-color))' }} className="h-20 flex items-center px-6 border-b relative overflow-hidden">
-        <div className="absolute inset-0 opacity-5" style={{ background: 'linear-gradient(135deg, rgb(var(--brand)) 0%, rgb(139 92 246) 100%)' }} />
-        <div 
-          className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg relative z-10 animate-float" 
-          style={{ background: 'linear-gradient(135deg, rgb(var(--brand)), rgb(139 92 246))' }} 
-          role="img" 
-          aria-label="WorkflowPro logo"
+      {/* Brand */}
+      <Link to="/dashboard" className="flex items-center gap-3 px-4 mb-6 group" aria-label="WorkflowPro home">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg shrink-0 group-hover:scale-105 transition-transform"
+          style={{ background: 'linear-gradient(135deg, rgb(var(--brand)), rgb(var(--cta)))' }}
         >
-          <Workflow className="text-white" size={24} strokeWidth={2.5} aria-hidden="true" />
+          <Sparkles size={20} />
         </div>
-        <div className="ml-3 relative z-10">
-          <span className="gradient-text text-xl block leading-none mb-1">WorkflowPro</span>
-          <span style={{ color: 'rgb(var(--text-secondary))' }} className="text-xs block font-medium">Automation Platform</span>
+        <div className="hidden xl:block min-w-0">
+          <p className="font-display font-bold text-sm text-primary leading-none">WorkflowPro</p>
+          <p className="text-[10px] text-tertiary mt-1">Aurora</p>
         </div>
-      </div>
+      </Link>
 
-      {/* Enhanced Navigation */}
-      <nav className="flex-1 px-4 py-6 space-y-2" aria-label="Main menu">
-        {navItems.map((item, index) => {
-          const Icon = item.icon;
-          const isActive = location.pathname === item.path;
-          
+      {/* Nav */}
+      <nav className="flex-1 px-2.5 space-y-1.5" aria-label="Main menu">
+        {NAV_ITEMS.map(({ icon: Icon, label, path }) => {
+          const active = location.pathname === path;
           return (
             <Link
-              key={item.path}
-              to={item.path}
-              onClick={createRipple}
-              className="group flex items-center justify-between px-4 py-3.5 rounded-xl transition-all duration-300 ripple-container animate-fade-in-up relative overflow-hidden"
+              key={path}
+              to={path}
+              title={label}
+              className="relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group"
               style={{
-                backgroundColor: isActive ? 'rgba(var(--brand), 0.1)' : 'transparent',
-                color: isActive ? 'rgb(var(--brand))' : 'rgb(var(--text-secondary))',
-                animationDelay: `${index * 0.1}s`,
-                border: isActive ? '2px solid rgba(var(--brand), 0.3)' : '2px solid transparent',
-                boxShadow: isActive ? '0 4px 12px rgba(var(--brand), 0.15)' : 'none'
+                background: active ? 'rgba(var(--brand), 0.12)' : 'transparent',
+                color: active ? 'rgb(var(--brand))' : 'rgb(var(--text-secondary))',
               }}
-              aria-current={isActive ? 'page' : undefined}
-              aria-label={item.label}
             >
-              {isActive && (
-                <div 
-                  className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-r-full"
-                  style={{ background: 'linear-gradient(135deg, rgb(var(--brand)) 0%, rgb(139 92 246) 100%)' }}
+              {active && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-full"
+                  style={{ background: 'rgb(var(--brand))' }}
                 />
               )}
-              <div className="flex items-center gap-3.5">
-                <div className={`p-1.5 rounded-lg transition-all ${isActive ? 'bg-white/10' : ''}`}>
-                  <Icon size={20} strokeWidth={2.5} aria-hidden="true" />
-                </div>
-                <span className="text-sm font-semibold">{item.label}</span>
-              </div>
-              {isActive && (
-                <div className="flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: 'rgb(var(--brand))' }} />
-                  <ChevronRight size={16} strokeWidth={2.5} aria-hidden="true" />
-                </div>
-              )}
+              <Icon size={19} className="shrink-0 mx-auto xl:mx-0 group-hover:scale-110 transition-transform" />
+              <span className="hidden xl:inline truncate">{label}</span>
             </Link>
           );
         })}
       </nav>
 
-      {/* Enhanced User Profile */}
-      <div style={{ borderColor: 'rgb(var(--border-color))' }} className="p-4 border-t backdrop-blur-sm" ref={profileRef}>
-        <div className="relative">
-          <div 
-            onClick={(e) => {
-              createRipple(e);
-              setShowProfileMenu(!showProfileMenu);
-            }}
-            className="flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer transition-all duration-300 ripple-container hover-glow group"
-            style={{
-              background: 'linear-gradient(135deg, rgba(var(--brand), 0.05) 0%, rgba(139, 92, 246, 0.05) 100%)',
-              border: '2px solid rgba(var(--border-color), 0.5)'
-            }}
+      {/* User chip */}
+      <div className="px-2.5 pt-3 mt-2 space-y-1.5" style={{ borderTop: '1px solid rgba(var(--border-color), 0.7)' }}>
+        <Link
+          to="/profile"
+          title="Profile"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors hover:bg-[rgba(var(--brand),0.08)]"
+        >
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 mx-auto xl:mx-0"
+            style={{ background: 'linear-gradient(135deg, rgb(var(--brand)), rgb(var(--brand-hover)))' }}
           >
-            <div className="w-11 h-11 rounded-full flex items-center justify-center shadow-lg relative overflow-hidden" style={{ background: 'linear-gradient(135deg, rgb(var(--brand)), rgb(139 92 246))' }}>
-              <span className="text-white font-bold text-base">P</span>
-              <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p style={{ color: 'rgb(var(--text-primary))' }} className="text-sm font-bold truncate">Pavan Kumar</p>
-              <p style={{ color: 'rgb(var(--text-secondary))' }} className="text-xs truncate">pavan@workflowpro.com</p>
-            </div>
-            <ChevronRight 
-              size={16} 
-              strokeWidth={2.5}
-              className="transition-transform group-hover:translate-x-1"
-              style={{ color: 'rgb(var(--text-secondary))' }}
-            />
+            {(user?.username?.[0] || 'U').toUpperCase()}
           </div>
-
-          {showProfileMenu && (
-            <div 
-              style={{ backgroundColor: 'rgb(var(--bg-tertiary))', borderColor: 'rgb(var(--border-color))' }}
-              className="absolute bottom-full left-2 right-2 mb-2 rounded-lg border shadow-lg py-1 animate-scale-in"
-            >
-              <button
-                onClick={(e) => {
-                  createRipple(e);
-                  navigate('/profile');
-                  setShowProfileMenu(false);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors ripple-container"
-                style={{ color: 'rgb(var(--text-secondary))' }}
-              >
-                <User size={16} strokeWidth={2} />
-                <span>Profile</span>
-              </button>
-              <button
-                onClick={(e) => {
-                  createRipple(e);
-                  navigate('/settings');
-                  setShowProfileMenu(false);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors ripple-container"
-                style={{ color: 'rgb(var(--text-secondary))' }}
-              >
-                <Settings size={16} strokeWidth={2} />
-                <span>Settings</span>
-              </button>
-              <div style={{ borderColor: 'rgb(var(--border-color))' }} className="border-t my-1" />
-              <button
-                onClick={(e) => {
-                  createRipple(e);
-                  logout();
-                  navigate('/login');
-                  setShowProfileMenu(false);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm transition-colors ripple-container text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-              >
-                <LogOut size={16} strokeWidth={2} />
-                <span>Logout</span>
-              </button>
-            </div>
-          )}
-        </div>
+          <div className="hidden xl:block min-w-0">
+            <p className="text-xs font-semibold text-primary truncate">{user?.username || 'Account'}</p>
+            <p className="text-[10px] text-tertiary truncate">{user?.email || ''}</p>
+          </div>
+        </Link>
+        <button
+          onClick={() => { logout(); navigate('/'); }}
+          title="Sign out"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
+        >
+          <LogOut size={18} className="shrink-0 mx-auto xl:mx-0" />
+          <span className="hidden xl:inline">Sign out</span>
+        </button>
       </div>
-    </div>
+    </aside>
   );
 }

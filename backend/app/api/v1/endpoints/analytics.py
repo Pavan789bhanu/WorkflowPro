@@ -5,6 +5,7 @@ from sqlalchemy import func, case
 from app.core.database import get_db
 from app.models.models import Workflow, Execution, ExecutionStatus, User
 from app.api.v1.endpoints.auth import get_current_user
+from app.automation.utils.logger import log
 
 router = APIRouter()
 
@@ -91,7 +92,7 @@ def get_analytics_overview(
                     total_duration_seconds += duration_seconds
                     valid_count += 1
             except Exception as e:
-                print(f"Error parsing timestamps: {e}")
+                log(f"[ANALYTICS] Error parsing execution timestamps: {e}")
                 continue
     
     average_duration_seconds = total_duration_seconds / valid_count if valid_count > 0 else 0

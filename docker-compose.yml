@@ -1,0 +1,41 @@
+# WorkflowPro — one-command deployment
+#
+#   1. ensure .env exists at the repo root (SECRET_KEY + an LLM API key;
+#      running ./start.sh once will generate a template)
+#   2. docker compose up --build -d
+#   3. open http://localhost:8080   (login: value of ADMIN_EMAIL / ADMIN_PASSWORD)
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      DEFAULT_HEADLESS: "true"          # browsers must be headless in containers
+      DATABASE_URL: sqlite:////data/appdata/ui_capture.db
+      SCREENSHOT_DIR: /data/captured_dataset
+      USER_DATA_DIR: /data/browser_session_data
+      STORAGE_STATE_PATH: /data/appdata/storage_state.json
+      DATA_DIR: /data/appdata
+    volumes:
+      - workflowpro-data:/data
+    ports:
+      - "8000:8000"                      # optional: direct API access
+    shm_size: "1gb"                      # Chromium needs shared memory
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  workflowpro-data:

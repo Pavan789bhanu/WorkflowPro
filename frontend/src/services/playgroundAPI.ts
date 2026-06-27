@@ -3,7 +3,9 @@
  * Handles all playground-related API calls
  */
 
-const API_BASE_URL = 'http://localhost:8000/api';
+import { API_BASE, getWsBase } from './baseUrls';
+
+const API_BASE_URL = `${API_BASE}/api`;
 
 export interface WorkflowStep {
   type: 'navigate' | 'click' | 'type' | 'wait' | 'select' | 'extract' | 'screenshot';
@@ -67,27 +69,54 @@ export type AutomationEventType =
   | 'browser_ready'
   | 'step_start'
   | 'step_complete'
+  | 'report_generating'
   | 'execution_stopped'
   | 'execution_complete'
   | 'error'
   | 'ws_closed';
 
+export interface AgentPlan {
+  start_url?: string;
+  app_name?: string;
+  outline?: string[];
+  success_criteria?: string;
+  requires_auth?: boolean;
+  warnings?: string[];
+  /** Query-rewriting output: precise, self-contained version of the user's query */
+  rewritten_task?: string;
+  search_terms?: string[];
+  sub_goals?: string[];
+}
+
+export interface AgentUIStep {
+  type: string;
+  description: string;
+  selector?: string | null;
+  url?: string | null;
+  value?: string | null;
+  reason?: string;
+}
+
 export interface AutomationEvent {
   type: AutomationEventType;
   message?: string;
-  steps?: WorkflowStep[];
+  steps?: AgentUIStep[];
+  plan?: AgentPlan;
+  mode?: 'agent' | 'script';
   confidence?: number;
   requires_auth?: boolean;
   warnings?: string[];
   estimated_duration?: number;
   step_index?: number;
-  step?: WorkflowStep;
+  step?: AgentUIStep;
   result?: StepResult;
   total_steps?: number;
   reason?: string;
   success?: boolean;
   steps_planned?: number;
   steps_executed?: number;
+  final_message?: string;
+  report?: string;
   query?: string;
 }
 
@@ -250,17 +279,23 @@ class PlaygroundAPI {
   }
 
   /**
-   * Save workflow to database
+   * Save workflow to database.
+   * Note: requires auth — use apiClient.createWorkflow() instead, which
+   * attaches the JWT and matches the backend schema. Kept for compatibility.
    */
-  async saveWorkflow(name: string, description: string, steps: WorkflowStep[]): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/workflows`, {
+  async saveWorkflow(name: string, description: string, steps: WorkflowStep[], appName = 'web'): Promise<unknown> {
+    const token = localStorage.getItem('auth_token');
+    const response = await fetch(`${this.baseUrl}/workflows/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({
         name,
         description,
-        steps: JSON.stringify(steps),
-        status: 'DRAFT',
+        app_name: appName,
+        start_url: steps.find((s) => s.type === 'navigate')?.url ?? null,
       }),
     });
 
@@ -276,12 +311,12 @@ class PlaygroundAPI {
    */
   async submitFeedback(
     originalTask: string,
-    generatedSteps: WorkflowStep[],
-    correctedSteps: WorkflowStep[],
+    generatedSteps: Array<WorkflowStep | AgentUIStep>,
+    correctedSteps: Array<WorkflowStep | AgentUIStep>,
     feedbackType: 'correction' | 'success' | 'failure',
     url: string,
     notes?: string
-  ): Promise<any> {
+  ): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/playground/feedback`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -350,8 +385,7 @@ class PlaygroundAPI {
     headless: boolean,
     onEvent: (event: AutomationEvent) => void
   ): () => void {
-    const wsBase = (import.meta.env.VITE_WS_URL as string | undefined) ?? 'ws://localhost:8000';
-    const wsUrl = `${wsBase}/api/automation/run-live`;
+    const wsUrl = `${getWsBase()}/api/automation/run-live`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -375,7 +409,17 @@ class PlaygroundAPI {
       onEvent({ type: 'ws_closed' });
     };
 
-    return () => ws.close();
+    // Cancel: politely ask the server to stop the run, then close.
+    return () => {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'cancel' }));
+        }
+      } catch {
+        // ignore
+      }
+      ws.close();
+    };
   }
 }
 

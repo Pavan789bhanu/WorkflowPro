@@ -1,14 +1,22 @@
-"""Workflow execution service that bridges API to automation engine."""
+"""Workflow execution service — bridges the API/DB layer to the AutomationAgent.
 
+Runs a saved workflow with the vision-driven agent, persists the outcome on the
+Execution row, broadcasts real-time progress over the app WebSocket, and writes
+an HTML report (with screenshots) served by /api/executions/{id}/report.
+"""
+
+import base64
+import html
 import json
+import re
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
 from sqlalchemy.orm import Session
 
-from app.automation.workflow.workflow_engine import WorkflowEngine
-from app.automation.browser.browser_manager import BrowserManager
-from app.automation.agent.vision_agent import VisionAgent
-from app.automation.agent.planner_agent import PlannerAgent
-from app.automation.browser.auth_manager import AuthManager
+from app.automation.agent.automation_agent import AutomationAgent, AgentResult
+from app.automation.utils.logger import log
 from app.services.websocket_manager import manager
 from app.models.models import Execution, Workflow, ExecutionStatus
 from app.core.database import SessionLocal
@@ -16,46 +24,153 @@ from app.core.config import settings, APP_URL_MAPPINGS
 from app.core.encryption import resolve_stored_password
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _markdown_to_html(md: str) -> str:
+    """Tiny dependency-free markdown → HTML for the report page."""
+    out = []
+    in_list = False
+    for raw_line in md.splitlines():
+        line = html.escape(raw_line.rstrip())
+        # inline: bold / code
+        line = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", line)
+        line = re.sub(r"`([^`]+)`", r"<code>\1</code>", line)
+        if line.startswith("### "):
+            line_html = f"<h3>{line[4:]}</h3>"
+        elif line.startswith("## "):
+            line_html = f"<h2>{line[3:]}</h2>"
+        elif line.startswith("# "):
+            line_html = f"<h1>{line[2:]}</h1>"
+        elif re.match(r"^\s*([-*]|\d+\.)\s+", line):
+            item = re.sub(r"^\s*([-*]|\d+\.)\s+", "", line)
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{item}</li>")
+            continue
+        elif line.strip() == "":
+            line_html = ""
+        else:
+            line_html = f"<p>{line}</p>"
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        if line_html:
+            out.append(line_html)
+    if in_list:
+        out.append("</ul>")
+    return "\n".join(out)
+
+
+def _write_html_report(result: AgentResult, workflow_name: str) -> Optional[str]:
+    """Render the agent's markdown report + screenshots into a styled HTML file."""
+    if not result.run_dir:
+        return None
+    run_dir = Path(result.run_dir)
+    status_color = "#10b981" if result.success else "#ef4444"
+    status_label = "SUCCESS" if result.success else "INCOMPLETE"
+
+    # Inline screenshots as data URIs → the report is fully self-contained
+    # (no extra authenticated requests needed when viewed in an iframe).
+    shots = []
+    for step in result.steps:
+        if step.screenshot_path and Path(step.screenshot_path).exists():
+            try:
+                b64 = base64.b64encode(Path(step.screenshot_path).read_bytes()).decode()
+            except Exception:
+                continue
+            title = html.escape(step.action.get("step_title") or step.action.get("action") or f"Step {step.index + 1}")
+            shots.append(
+                f'<figure><img src="data:image/png;base64,{b64}" loading="lazy" alt="{title}"/>'
+                f"<figcaption>Step {step.index + 1}: {title}</figcaption></figure>"
+            )
+
+    steps_rows = "".join(
+        f"<tr><td>{s.index + 1}</td><td>{html.escape(str(s.action.get('action') or ''))}</td>"
+        f"<td>{html.escape(s.action.get('step_title') or s.action.get('reason') or '')}</td>"
+        f"<td class='{ 'ok' if s.status == 'success' else 'err' }'>{s.status}</td>"
+        f"<td>{html.escape((s.message or '')[:160])}</td></tr>"
+        for s in result.steps
+    )
+
+    doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Automation Report — {html.escape(workflow_name)}</title>
+<style>
+  :root {{ color-scheme: light; }}
+  body {{ font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+         margin: 0; background: #f8fafc; color: #0f172a; line-height: 1.6; }}
+  .wrap {{ max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }}
+  .badge {{ display: inline-block; padding: 4px 14px; border-radius: 999px; color: #fff;
+           background: {status_color}; font-weight: 700; font-size: 13px; letter-spacing: .04em; }}
+  .meta {{ color: #64748b; font-size: 14px; margin: 6px 0 24px; }}
+  .card {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 24px 28px; margin-bottom: 24px; }}
+  h1 {{ font-size: 24px; margin: 8px 0 4px; }}
+  h2 {{ font-size: 18px; margin-top: 22px; }}
+  h3 {{ font-size: 15px; }}
+  code {{ background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 13px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #eef2f7; vertical-align: top; }}
+  th {{ color: #64748b; font-weight: 600; }}
+  td.ok {{ color: #059669; font-weight: 600; }}
+  td.err {{ color: #dc2626; font-weight: 600; }}
+  figure {{ margin: 0 0 22px; }}
+  figure img {{ width: 100%; border-radius: 10px; border: 1px solid #e2e8f0; }}
+  figcaption {{ font-size: 12px; color: #64748b; margin-top: 6px; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="badge">{status_label}</span>
+  <h1>{html.escape(workflow_name)}</h1>
+  <p class="meta">Task: {html.escape(result.task)}<br/>
+     Final URL: {html.escape(result.final_url or '—')} · Steps: {result.steps_executed} · Run: {result.run_id}</p>
+  <div class="card">{_markdown_to_html(result.report_markdown or result.final_message)}</div>
+  <div class="card"><h2>Action Log</h2>
+    <table><thead><tr><th>#</th><th>Action</th><th>Description</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>{steps_rows or '<tr><td colspan=5>No steps executed</td></tr>'}</tbody></table>
+  </div>
+  <div class="card"><h2>Screenshots</h2>{''.join(shots) or '<p>No screenshots captured.</p>'}</div>
+</div>
+</body>
+</html>"""
+    report_path = run_dir / "execution_report.html"
+    report_path.write_text(doc, encoding="utf-8")
+    return str(report_path)
+
+
 async def execute_workflow(execution_id: int, db: Session = None):
-    """
-    Execute a workflow using the automation engine.
-    
-    Args:
-        execution_id: ID of the execution record
-        db: Database session (optional, will create new one if not provided)
-    """
-    print(f"[WORKFLOW EXECUTOR] Starting execution {execution_id}")
-    
-    # Create new session if not provided
-    if db is None:
-        db = SessionLocal()
-        close_db = True
-    else:
-        close_db = False
-    
+    """Execute a workflow using the AutomationAgent."""
+    log(f"[WORKFLOW EXECUTOR] Starting execution {execution_id}")
+
+    close_db = db is None
+    db = db or SessionLocal()
+
     try:
-        # Get execution and workflow from database
         execution = db.query(Execution).filter(Execution.id == execution_id).first()
         if not execution:
-            print(f"[ERROR] Execution {execution_id} not found")
+            log(f"[WORKFLOW EXECUTOR] Execution {execution_id} not found")
             return
-        
+
         workflow = db.query(Workflow).filter(Workflow.id == execution.workflow_id).first()
         if not workflow:
-            print(f"[ERROR] Workflow {execution.workflow_id} not found")
             execution.status = ExecutionStatus.FAILED
-            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            execution.error_message = "Workflow not found"
+            execution.completed_at = _utcnow()
             db.commit()
             return
-        
-        print(f"[WORKFLOW EXECUTOR] Executing workflow: {workflow.name} (ID: {workflow.id})")
-        
-        # Update status to running
+
+        log(f"[WORKFLOW EXECUTOR] Executing workflow: {workflow.name} (ID: {workflow.id})")
+
         execution.status = ExecutionStatus.RUNNING
-        execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        execution.started_at = _utcnow()
         db.commit()
-        
-        # Broadcast start event
+
         await manager.send_execution_update(
             execution_id=execution_id,
             event="started",
@@ -63,210 +178,120 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 "workflow_id": workflow.id,
                 "workflow_name": workflow.name,
                 "status": "RUNNING",
-                "started_at": execution.started_at.isoformat() if execution.started_at else None
-            }
+                "started_at": execution.started_at.isoformat(),
+            },
         )
-        print(f"[WORKFLOW EXECUTOR] Broadcasted start event for execution {execution_id}")
-        
-        # Extract task from workflow fields
+
+        # Resolve task + URL
         app_name = workflow.app_name or ""
         url = workflow.start_url or ""
-        
-        # Auto-generate URL from app name if not provided
         if not url and app_name:
             url = APP_URL_MAPPINGS.get(app_name.lower(), "")
-            if url:
-                print(f"[WORKFLOW EXECUTOR] Auto-generated URL for {app_name}: {url}")
-            else:
-                print(f"[WORKFLOW EXECUTOR] Warning: No URL mapping found for {app_name}")
-        
-        # Validate we have a URL
-        if not url:
-            raise ValueError(f"No start URL provided or found for app '{app_name}'. Please provide a start_url in the workflow.")
-        
-        # Generate task description from workflow
-        if workflow.description:
-            task = workflow.description
-        else:
-            task = f"Automate {workflow.name} in {app_name}" if app_name else f"Execute workflow: {workflow.name}"
-        
-        if not task:
-            raise ValueError("No task specified in workflow")
-        
-        print(f"[WORKFLOW EXECUTOR] Task: {task}")
-        print(f"[WORKFLOW EXECUTOR] App: {app_name}")
-        print(f"[WORKFLOW EXECUTOR] URL: {url}")
-        
-        # Initialize automation components
-        # Set headless=False for development to see browser interactions
-        browser_manager = BrowserManager(headless=settings.DEFAULT_HEADLESS)
-        vision_agent = VisionAgent()
-        planner_agent = PlannerAgent()
-        
-        # Initialize auth manager with credentials
-        # Priority: workflow credentials > .env credentials
+        task = workflow.description or f"Complete the workflow '{workflow.name}'" + (f" in {app_name}" if app_name else "")
+
+        # Credentials: workflow-specific > .env defaults
         auth_email = workflow.login_email or settings.LOGIN_EMAIL
         auth_password = resolve_stored_password(workflow.login_password) or settings.LOGIN_PASSWORD
-        
-        auth_manager = None
-        if auth_email and auth_password:
-            auth_manager = AuthManager(
-                email=auth_email,
-                password=auth_password
-            )
-            print(f"[WORKFLOW EXECUTOR] Using credentials for: {auth_email}")
-        else:
-            print("[WORKFLOW EXECUTOR] No credentials available - workflows may fail if login required")
-        
-        # Create workflow engine with correct parameter names
-        engine = WorkflowEngine(
-            browser=browser_manager,
-            vision_agent=vision_agent,
-            planner_agent=planner_agent,
-            auth=auth_manager
-        )
-        
-        # Send progress update
-        await manager.send_execution_update(
-            execution_id=execution_id,
-            event="progress",
-            data={
-                "message": "Initializing automation engine...",
-                "step": "setup"
-            }
-        )
-        
-        # Execute the task
-        try:
-            await engine.run_task(
-                task=task,
-                app_name=app_name,
-                start_url=url
-            )
-            
-            # Get the HTML report path
-            html_report = engine.report_path if hasattr(engine, 'report_path') and engine.report_path else None
-            
-            # Check if task actually completed successfully
-            # The engine stores this in the dataset metadata
-            task_completed = False
-            completion_status = "failure"
-            completion_percentage = 0
-            
-            # Safely access dataset attribute
-            try:
-                if hasattr(engine, 'dataset') and engine.dataset:
-                    # Find the completion metadata entry
-                    completion_entry = next(
-                        (entry for entry in engine.dataset if entry.get("completion_status")),
-                        None
-                    )
-                    if completion_entry:
-                        completion_status = completion_entry.get("completion_status", "failure")
-                        completion_percentage = completion_entry.get("completion_percentage", 0)
-                        task_completed = completion_status == "success"
-                        print(f"[WORKFLOW EXECUTOR] Task completion: {completion_status} ({completion_percentage}%)")
-            except Exception as dataset_error:
-                print(f"[WORKFLOW EXECUTOR] Warning: Could not access dataset: {dataset_error}")
-            
-            # Update execution status based on actual completion
-            if task_completed:
-                execution.status = ExecutionStatus.SUCCESS
-                status_message = "Workflow executed successfully"
-            elif completion_status == "partial":
-                execution.status = ExecutionStatus.FAILED
-                status_message = f"Workflow partially completed ({completion_percentage}%)"
-            else:
-                execution.status = ExecutionStatus.FAILED
-                status_message = f"Workflow execution failed ({completion_percentage}%)"
-            
-            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            if execution.started_at:
-                duration = (execution.completed_at - execution.started_at).total_seconds()
-                execution.duration = int(duration)
-            
-            result_data = {
-                "success": task_completed,
-                "message": status_message,
-                "task": task,
-                "app_name": app_name,
-                "url": url,
-                "completion_status": completion_status,
-                "completion_percentage": completion_percentage
-            }
-            
-            # Add HTML report path if available
-            if html_report:
-                result_data["html_report"] = html_report
-            
-            execution.result = json.dumps(result_data)
-            
-            # Broadcast completion
+        credentials = {"email": auth_email, "password": auth_password} if auth_email and auth_password else {}
+
+        # Stream agent events to all websocket clients (without heavy screenshots)
+        async def forward_event(event: dict):
+            payload = dict(event)
+            result = payload.get("result")
+            if isinstance(result, dict) and result.get("screenshot"):
+                result = dict(result)
+                screenshot = result.pop("screenshot", "")
+                # Forward a thumbnail-size signal only (full image stays on disk)
+                result["has_screenshot"] = bool(screenshot)
+                payload["result"] = result
             await manager.send_execution_update(
                 execution_id=execution_id,
-                event="completed" if task_completed else "failed",
-                data={
-                    "status": execution.status.value if hasattr(execution.status, 'value') else str(execution.status),
-                    "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
-                    "duration": execution.duration,
-                    "result": execution.result,
-                    "success": task_completed
-                }
+                event="progress",
+                data=payload,
             )
-            
-            if task_completed:
-                print(f"[WORKFLOW EXECUTOR] Execution {execution_id} completed successfully in {execution.duration}s")
-            else:
-                print(f"[WORKFLOW EXECUTOR] Execution {execution_id} failed: {status_message}")
-            
+
+        agent = AutomationAgent(
+            headless=settings.DEFAULT_HEADLESS,
+            credentials=credentials,
+            on_event=forward_event,
+        )
+
+        try:
+            result = await agent.run(task=task, start_url=url or None)
         except Exception as exec_error:
-            # Handle execution failure
             execution.status = ExecutionStatus.FAILED
-            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            if execution.started_at:
-                duration = (execution.completed_at - execution.started_at).total_seconds()
-                execution.duration = int(duration)
+            execution.completed_at = _utcnow()
+            execution.error_message = str(exec_error)[:1000]
             execution.result = json.dumps({
                 "success": False,
                 "error": str(exec_error),
-                "message": "Workflow execution failed"
+                "message": "Workflow execution crashed",
             })
-            
-            # Broadcast failure
+            db.commit()
             await manager.send_execution_update(
                 execution_id=execution_id,
                 event="failed",
-                data={
-                    "status": "FAILED",
-                    "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
-                    "duration": execution.duration,
-                    "error": str(exec_error),
-                    "success": False
-                }
+                data={"status": "FAILED", "error": str(exec_error), "success": False},
             )
-            print(f"[WORKFLOW EXECUTOR] Execution {execution_id} failed: {str(exec_error)}")
-            
             raise
-        
-        finally:
-            # Cleanup
-            await browser_manager.close()
-            db.commit()
-    
+
+        html_report = None
+        try:
+            html_report = _write_html_report(result, workflow.name)
+        except Exception as report_err:
+            log(f"[WORKFLOW EXECUTOR] HTML report failed: {report_err}")
+
+        execution.status = ExecutionStatus.SUCCESS if result.success else ExecutionStatus.FAILED
+        execution.completed_at = _utcnow()
+        duration = int((execution.completed_at - execution.started_at).total_seconds()) if execution.started_at else None
+        if not result.success:
+            execution.error_message = (result.error or result.final_message or "")[:1000]
+
+        execution.result = json.dumps({
+            "success": result.success,
+            "message": result.final_message,
+            "task": task,
+            "app_name": app_name,
+            "url": url,
+            "final_url": result.final_url,
+            "steps_executed": result.steps_executed,
+            "run_id": result.run_id,
+            "report_markdown": result.report_markdown,
+            "html_report": html_report,
+            "duration": duration,
+        })
+        db.commit()
+
+        await manager.send_execution_update(
+            execution_id=execution_id,
+            event="completed" if result.success else "failed",
+            data={
+                "status": execution.status.value,
+                "completed_at": execution.completed_at.isoformat(),
+                "duration": duration,
+                "success": result.success,
+                "message": result.final_message,
+            },
+        )
+        log(
+            f"[WORKFLOW EXECUTOR] Execution {execution_id} "
+            f"{'succeeded' if result.success else 'failed'} in {duration}s"
+        )
+
     except Exception as e:
-        print(f"Error executing workflow: {e}")
-        if db:
-            try:
-                execution = db.query(Execution).filter(Execution.id == execution_id).first()
-                if execution:
-                    execution.status = ExecutionStatus.FAILED
-                    execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                    execution.result = json.dumps({"success": False, "error": str(e)})
-                    db.commit()
-            except Exception as db_error:
-                print(f"Error updating execution status: {db_error}")
+        log(f"[WORKFLOW EXECUTOR] Error executing workflow: {e}")
+        try:
+            execution = db.query(Execution).filter(Execution.id == execution_id).first()
+            if execution and execution.status not in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
+                execution.status = ExecutionStatus.FAILED
+                execution.completed_at = _utcnow()
+                execution.error_message = str(e)[:1000]
+                execution.result = execution.result or json.dumps({"success": False, "error": str(e)})
+                db.commit()
+        except Exception as db_error:
+            log(f"[WORKFLOW EXECUTOR] Error updating execution status: {db_error}")
         raise
-    
+
     finally:
         if close_db and db:
             db.close()

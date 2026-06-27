@@ -26,7 +26,25 @@
 
 ## 🎯 Overview
 
-WorkflowPro is an intelligent browser automation platform that transforms natural language descriptions into executable browser workflows. Powered by GPT-4 Vision, it understands web interfaces visually—just like a human would—and executes complex multi-step tasks autonomously.
+WorkflowPro is an intelligent browser automation platform that transforms natural language descriptions into executable browser workflows. Powered by a vision-capable LLM (**OpenAI GPT-4o or Anthropic Claude — your choice via .env**), it understands web interfaces visually—just like a human would—and executes complex multi-step tasks autonomously.
+
+At its core is the **AutomationAgent**: an observe → decide → act loop. Before every single action the agent takes a screenshot, scans the live DOM for interactive elements, and lets the LLM choose the next move. No brittle pre-scripted selectors. When the run finishes you get a **result report containing the actual output** of your task (summaries, findings, confirmations) — not just a list of clicks.
+
+```
+"Go to Medium, find articles about RAG from the past week, and summarize what's new in AI"
+                                  │
+                                  ▼
+      ┌────────────── AutomationAgent loop ──────────────┐
+      │  📸 Observe: screenshot + DOM element digest      │
+      │  🧠 Decide:  LLM picks ONE action (click #14, …)  │
+      │  🖱️ Act:     Playwright executes it               │
+      │  ✅ Verify:  page-change + loop detection         │
+      └───────────── repeat until done ──────────────────┘
+                                  │
+                                  ▼
+        📄 Result report: the summaries you asked for,
+           + step log + screenshots, streamed live to the UI
+```
 
 ### The Problem
 
@@ -129,11 +147,12 @@ Output: Structured workflow with 8 executable steps
 │                                    │                                        │
 │                                    ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                     Automation Engine                               │    │
+│  │                AutomationAgent (vision-driven loop)                 │    │
 │  │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────────────────┐│    │
-│  │  │  Planner  │ │  Vision   │ │  Browser  │ │    Auth Manager       ││    │
-│  │  │   Agent   │ │   Agent   │ │  Manager  │ │  (OAuth, Sessions)    ││    │
-│  │  │  (GPT-4)  │ │(GPT-4V)   │ │(Playwright)││                       ││    │
+│  │  │  Observe  │ │  Decide   │ │    Act    │ │   Report Generator    ││    │
+│  │  │(screenshot│ │ LLM Client│ │(Playwright)│ │ (result + screenshots)││    │
+│  │  │+DOM digest│ │ GPT-4o /  │ │ element-id│ │                       ││    │
+│  │  │ )         │ │  Claude   │ │  actions  │ │                       ││    │
 │  │  └───────────┘ └───────────┘ └───────────┘ └───────────────────────┘│    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
@@ -152,7 +171,8 @@ Output: Structured workflow with 8 executable steps
 | **Database** | SQLite + SQLAlchemy | Lightweight persistent storage |
 | **Real-time** | WebSocket (Socket.IO) | Live execution updates |
 | **Browser** | Playwright | Cross-browser automation |
-| **AI** | OpenAI GPT-4 Vision | Visual UI understanding |
+| **AI** | OpenAI GPT-4o / Anthropic Claude (configurable) | Visual UI understanding |
+| **Deployment** | Docker Compose (backend + nginx frontend) | One-command deploy |
 | **CI/CD** | GitHub Actions | Automated testing & deployment |
 
 ---
@@ -161,76 +181,59 @@ Output: Structured workflow with 8 executable steps
 
 ### Prerequisites
 
-- **Python 3.11+** with pip
-- **Node.js 20+** with npm
-- **OpenAI API Key** with GPT-4 Vision access
+- **Python 3.11+** with pip *(local dev)* or **Docker** *(deployment)*
+- **Node.js 20+** with npm *(local dev)*
+- An LLM API key: **OpenAI** (GPT-4o) *or* **Anthropic** (Claude) — set either one
 
-### Installation
+### Option 1 — Docker (recommended for deployment)
 
 ```bash
-# Clone the repository
 git clone https://github.com/pavan-kumar-malasani/ui_capture_system.git
 cd ui_capture_system
+# create .env (./start.sh generates a template on first run, or write one
+# with: SECRET_KEY + OPENAI_API_KEY or ANTHROPIC_API_KEY)
+docker compose up --build -d
 ```
 
-#### Backend setup
+Open **http://localhost:8080** — login `admin@example.com` / `admin123` (configurable via `ADMIN_EMAIL` / `ADMIN_PASSWORD`).
+
+### Option 2 — Local development (lets you watch the browser work)
 
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-playwright install chromium
+git clone https://github.com/pavan-kumar-malasani/ui_capture_system.git
+cd ui_capture_system
+./start.sh                 # first run creates a .env template — fill in
+                           # SECRET_KEY + an LLM API key, then re-run
 ```
 
-#### Configure environment
+Open **http://localhost:5173**. Set `DEFAULT_HEADLESS=false` in `.env` to watch the Chromium window live. Stop with `./stop.sh`.
+
+### Choosing your LLM provider
 
 ```bash
-cp .env.example .env
-# Edit .env with your OpenAI API key and a SECRET_KEY (openssl rand -hex 32)
+# .env
+LLM_PROVIDER=auto            # auto | openai | anthropic
+OPENAI_API_KEY=sk-...        # for GPT-4o
+ANTHROPIC_API_KEY=sk-ant-... # for Claude
+OPENAI_MODEL=gpt-4o
+ANTHROPIC_MODEL=claude-sonnet-4-5
 ```
 
-#### Initialize database
+`auto` uses whichever key is present (OpenAI wins if both are set). Switch providers any time — no code changes needed.
+
+### Manual startup (alternative)
 
 ```bash
+# Terminal 1 — backend
+cd backend && python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt && playwright install chromium
 python init_db.py
-```
-
-#### Frontend setup
-
-```bash
-cd ../frontend
-npm install
-cp .env.example .env
-```
-
-### Running the Application
-
-**Option 1: Using start script (recommended)**
-
-```bash
-./start.sh
-```
-
-**Option 2: Manual startup**
-
-
-### Terminal 1 - Backend
-```bash
-cd backend
-source venv/bin/activate
 uvicorn app.main:app --reload --port 8000
-```
 
-### Terminal 2 - Frontend
-```
-cd frontend
+# Terminal 2 — frontend
+cd frontend && npm install && cp .env.example .env
 npm run dev
 ```
-
-Access the application at **http://localhost:5173**
-
-Default credentials: `admin@example.com` / `admin123`
 
 ---
 

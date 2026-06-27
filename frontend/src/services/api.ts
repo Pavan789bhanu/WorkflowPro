@@ -5,8 +5,10 @@
  * for real-time updates from the backend.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+import { API_BASE, getWsBase } from './baseUrls';
+
+const API_BASE_URL = API_BASE;
+const WS_BASE_URL = getWsBase();
 
 // ============================================================================
 // Types
@@ -127,6 +129,11 @@ class APIClient {
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: response.statusText }));
         console.error(`[APIClient] ❌ Request failed: ${error.detail || response.statusText}`);
+        // Stale/invalid token → tell the app so it can log out cleanly
+        // instead of rendering "logged-in" pages where every call fails.
+        if (response.status === 401 && this.token && !endpoint.includes('/auth/login')) {
+          window.dispatchEvent(new Event('auth:unauthorized'));
+        }
         throw new Error(error.detail || `HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -216,10 +223,33 @@ class APIClient {
     });
   }
 
-  async stopExecution(id: string): Promise<Execution> {
-    return this.request<Execution>(`/api/executions/${id}/stop`, {
+  /** Thumbs up/down + notes on a run — feeds the workflow learning system. */
+  async submitExecutionFeedback(
+    id: string | number,
+    rating: 'positive' | 'negative',
+    notes?: string
+  ): Promise<{ message: string; rating: string }> {
+    return this.request(`/api/executions/${id}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, notes: notes || null }),
+    });
+  }
+
+  async stopExecution(id: string): Promise<{ message: string; cancelled: boolean }> {
+    // Backend route is /cancel (was incorrectly /stop before)
+    return this.request<{ message: string; cancelled: boolean }>(`/api/executions/${id}/cancel`, {
       method: 'POST',
     });
+  }
+
+  /**
+   * URL for the execution HTML report. Reports are loaded in an <iframe>
+   * which cannot send Authorization headers, so the JWT is passed as a
+   * query parameter (the backend accepts both).
+   */
+  getReportUrl(executionId: string | number): string {
+    const tokenParam = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+    return `${this.baseURL}/api/executions/${executionId}/report${tokenParam}`;
   }
 
   // ============================================================================
@@ -271,6 +301,11 @@ class APIClient {
     });
   }
 
+  /** Validate the current token and fetch the logged-in user. */
+  async getMe(): Promise<{ id: number; email: string; username: string }> {
+    return this.request('/api/auth/me');
+  }
+
   // ============================================================================
   // Health Check
   // ============================================================================
@@ -301,11 +336,11 @@ class APIClient {
       this.ws.onopen = () => {
         console.log('WebSocket connected');
         this.reconnectAttempts = 0;
-        
-        // Send heartbeat every 30 seconds
+
+        // Send heartbeat every 30 seconds (JSON — the server parses JSON pings)
         const heartbeat = setInterval(() => {
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send('ping');
+            this.ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
           } else {
             clearInterval(heartbeat);
           }
@@ -315,7 +350,10 @@ class APIClient {
       this.ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          this.notifyListeners(message.type, message.data);
+          // Pass the FULL message so listeners receive execution_id /
+          // workflow_id alongside the payload (previously only `.data`
+          // was forwarded and the IDs were lost).
+          this.notifyListeners(message.type, message);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
         }
@@ -403,16 +441,16 @@ class APIClient {
 export const apiClient = new APIClient();
 export const api = apiClient; // Alias for convenience
 
-// Auto-connect WebSocket on module load - TEMPORARILY DISABLED
-// Uncomment these lines once backend WebSocket is stable
-// if (typeof window !== 'undefined') {
-//   apiClient.connectWebSocket();
-  
-//   // Reconnect on page visibility change
-//   document.addEventListener('visibilitychange', () => {
-//     if (!document.hidden) {
-//       apiClient.connectWebSocket();
-//     }
-//   });
-// }
+// Auto-connect the WebSocket so dashboards receive real-time execution
+// updates. Reconnects automatically (exponential backoff) and when the tab
+// becomes visible again.
+if (typeof window !== 'undefined') {
+  apiClient.connectWebSocket();
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      apiClient.connectWebSocket();
+    }
+  });
+}
 

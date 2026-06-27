@@ -1,8 +1,10 @@
 #!/bin/bash
 
-# Verification script for UI Capture System
+# Verification script for WorkflowPro
+# Works from any cwd — resolves paths relative to this script.
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-echo "🔍 Verifying UI Capture System Setup..."
+echo "🔍 Verifying WorkflowPro Setup..."
 echo ""
 
 ERRORS=0
@@ -30,19 +32,19 @@ fi
 # Check project structure
 echo "3️⃣  Checking project files..."
 REQUIRED_FILES=(
-    "api_server.py"
-    "main.py"
-    "config.py"
-    "requirements.txt"
-    "agent/vision_agent.py"
-    "browser/browser_manager.py"
-    "workflow/workflow_engine.py"
+    "backend/app/main.py"
+    "backend/app/core/config.py"
+    "backend/requirements.txt"
+    "backend/app/automation/agent/automation_agent.py"
+    "backend/app/services/llm_client.py"
+    "backend/app/services/workflow_executor.py"
     "frontend/package.json"
     "frontend/src/services/api.ts"
     "frontend/src/pages/Dashboard.tsx"
     "frontend/src/pages/WorkflowsPage.tsx"
     "frontend/src/pages/ExecutionsPage.tsx"
     "frontend/src/pages/AnalyticsPage.tsx"
+    "frontend/src/pages/PlaygroundPage.tsx"
 )
 
 for file in "${REQUIRED_FILES[@]}"; do
@@ -74,20 +76,23 @@ else
     echo "   ⚠️  frontend/.env not found (will be created on first run)"
 fi
 
-# Check Python dependencies
+# Check Python dependencies (prefer the project venv when it exists)
 echo "5️⃣  Checking Python dependencies..."
-if pip show fastapi &> /dev/null; then
-    echo "   ✅ FastAPI installed"
-else
-    echo "   ❌ FastAPI not installed"
-    ERRORS=$((ERRORS + 1))
+PIP="pip"
+if [ -x "backend/venv/bin/pip" ]; then
+    PIP="backend/venv/bin/pip"
 fi
 
-if pip show playwright &> /dev/null; then
+if $PIP show fastapi &> /dev/null; then
+    echo "   ✅ FastAPI installed"
+else
+    echo "   ⚠️  FastAPI not installed yet (./start.sh installs it)"
+fi
+
+if $PIP show playwright &> /dev/null; then
     echo "   ✅ Playwright installed"
 else
-    echo "   ❌ Playwright not installed"
-    ERRORS=$((ERRORS + 1))
+    echo "   ⚠️  Playwright not installed yet (./start.sh installs it)"
 fi
 
 # Check frontend dependencies
@@ -121,7 +126,7 @@ if [ $ERRORS -eq 0 ]; then
     echo "Next steps:"
     echo "1. Update OPENAI_API_KEY in .env file"
     echo "2. Run: ./start.sh"
-    echo "3. Open: http://localhost:5176"
+    echo "3. Open: http://localhost:5173"
 else
     echo "❌ Found $ERRORS error(s). Please fix them before starting."
     echo ""

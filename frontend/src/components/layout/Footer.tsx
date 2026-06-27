@@ -1,222 +1,112 @@
-import { Github, Twitter, Linkedin, Mail } from 'lucide-react';
+/**
+ * Footer — professional glass footer used on app pages and the landing page.
+ */
+import { Link } from 'react-router-dom';
+import { Sparkles, Github, BookOpen, Heart } from 'lucide-react';
 
-export default function Footer() {
-  const currentYear = new Date().getFullYear();
+const PRODUCT_LINKS = [
+  { label: 'Playground', to: '/playground' },
+  { label: 'Workflows', to: '/workflows' },
+  { label: 'Executions', to: '/executions' },
+  { label: 'Analytics', to: '/analytics' },
+];
+
+const ACCOUNT_LINKS = [
+  { label: 'Sign in', to: '/login' },
+  { label: 'Profile', to: '/profile' },
+  { label: 'Settings', to: '/settings' },
+];
+
+export default function Footer({ compact = false }: { compact?: boolean }) {
+  const year = new Date().getFullYear();
+
+  if (compact) {
+    return (
+      <footer className="glass-card px-5 py-3.5 mt-8 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-tertiary animate-fade-in">
+        <span className="flex items-center gap-1.5 font-semibold text-secondary">
+          <Sparkles size={13} className="text-brand" /> WorkflowPro
+        </span>
+        <span className="hidden sm:inline">·</span>
+        <span>© {year}</span>
+        <span className="hidden sm:inline">·</span>
+        <span className="flex items-center gap-1.5">
+          <span className="live-dot" style={{ width: 7, height: 7 }} /> agent online
+        </span>
+        <span className="ml-auto flex items-center gap-1">
+          built with <Heart size={11} className="text-rose-500" /> and the ui-ux-pro-max skill
+        </span>
+      </footer>
+    );
+  }
 
   return (
-    <footer 
-      style={{ backgroundColor: 'rgb(var(--bg-secondary))', borderColor: 'rgb(var(--border-color))' }} 
-      className="border-t mt-auto"
-    >
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-          {/* Brand Section */}
-          <div className="md:col-span-2">
-            <div className="flex items-center gap-2 mb-3">
-              <div 
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ backgroundColor: 'rgb(var(--brand))' }}
+    <footer className="max-w-6xl mx-auto px-5 pb-8 pt-4 w-full">
+      <div className="glass-card p-8">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+          <div className="col-span-2 md:col-span-1">
+            <div className="flex items-center gap-2.5 mb-3">
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-white shadow"
+                style={{ background: 'linear-gradient(135deg, rgb(var(--brand)), rgb(var(--cta)))' }}
               >
-                <span className="text-white font-bold text-sm">UC</span>
+                <Sparkles size={17} />
               </div>
-              <span 
-                style={{ color: 'rgb(var(--text-primary))' }} 
-                className="text-lg font-semibold"
-              >
-                UI Capture System
-              </span>
+              <span className="font-display font-bold text-primary">WorkflowPro</span>
             </div>
-            <p 
-              style={{ color: 'rgb(var(--text-secondary))' }} 
-              className="text-sm mb-4 max-w-md"
-            >
-              The AI automation platform built for everyone. Create powerful workflows with visual building blocks and AI-enhanced decision making.
+            <p className="text-xs text-secondary leading-relaxed max-w-[220px]">
+              Agentic browser automation — describe the task in plain English, get the result.
             </p>
-            <div className="flex gap-3">
-              <a 
-                href="https://github.com" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="p-2 rounded-lg transition-all hover-glow"
-                style={{ 
-                  color: 'rgb(var(--text-secondary))',
-                  backgroundColor: 'rgb(var(--bg-tertiary))'
-                }}
-                aria-label="GitHub"
-              >
-                <Github size={18} strokeWidth={2} />
-              </a>
-              <a 
-                href="https://twitter.com" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="p-2 rounded-lg transition-all hover-glow"
-                style={{ 
-                  color: 'rgb(var(--text-secondary))',
-                  backgroundColor: 'rgb(var(--bg-tertiary))'
-                }}
-                aria-label="Twitter"
-              >
-                <Twitter size={18} strokeWidth={2} />
-              </a>
-              <a 
-                href="https://linkedin.com" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="p-2 rounded-lg transition-all hover-glow"
-                style={{ 
-                  color: 'rgb(var(--text-secondary))',
-                  backgroundColor: 'rgb(var(--bg-tertiary))'
-                }}
-                aria-label="LinkedIn"
-              >
-                <Linkedin size={18} strokeWidth={2} />
-              </a>
-              <a 
-                href="mailto:contact@uicapture.com" 
-                className="p-2 rounded-lg transition-all hover-glow"
-                style={{ 
-                  color: 'rgb(var(--text-secondary))',
-                  backgroundColor: 'rgb(var(--bg-tertiary))'
-                }}
-                aria-label="Email"
-              >
-                <Mail size={18} strokeWidth={2} />
-              </a>
-            </div>
           </div>
 
-          {/* Product Links */}
           <div>
-            <h3 
-              style={{ color: 'rgb(var(--text-primary))' }} 
-              className="text-sm font-semibold mb-3"
-            >
-              Product
-            </h3>
+            <p className="label mb-3">Product</p>
             <ul className="space-y-2">
-              <li>
-                <a 
-                  href="/workflows" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Workflows
-                </a>
-              </li>
-              <li>
-                <a 
-                  href="/playground" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Playground
-                </a>
-              </li>
-              <li>
-                <a 
-                  href="/executions" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Executions
-                </a>
-              </li>
-              <li>
-                <a 
-                  href="/analytics" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Analytics
-                </a>
-              </li>
+              {PRODUCT_LINKS.map((l) => (
+                <li key={l.to}>
+                  <Link to={l.to} className="text-sm text-secondary hover:text-brand transition-colors">{l.label}</Link>
+                </li>
+              ))}
             </ul>
           </div>
 
-          {/* Resources Links */}
           <div>
-            <h3 
-              style={{ color: 'rgb(var(--text-primary))' }} 
-              className="text-sm font-semibold mb-3"
-            >
-              Resources
-            </h3>
+            <p className="label mb-3">Account</p>
+            <ul className="space-y-2">
+              {ACCOUNT_LINKS.map((l) => (
+                <li key={l.to}>
+                  <Link to={l.to} className="text-sm text-secondary hover:text-brand transition-colors">{l.label}</Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <p className="label mb-3">Resources</p>
             <ul className="space-y-2">
               <li>
-                <a 
-                  href="#" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Documentation
+                <a href="https://github.com/pavan-kumar-malasani/ui_capture_system" target="_blank" rel="noreferrer"
+                  className="text-sm text-secondary hover:text-brand transition-colors inline-flex items-center gap-1.5">
+                  <Github size={13} /> GitHub
                 </a>
               </li>
               <li>
-                <a 
-                  href="#" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  API Reference
-                </a>
-              </li>
-              <li>
-                <a 
-                  href="#" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Community
-                </a>
-              </li>
-              <li>
-                <a 
-                  href="#" 
-                  style={{ color: 'rgb(var(--text-secondary))' }}
-                  className="text-sm hover:text-brand transition-colors"
-                >
-                  Support
+                <a href="http://localhost:8000/docs" target="_blank" rel="noreferrer"
+                  className="text-sm text-secondary hover:text-brand transition-colors inline-flex items-center gap-1.5">
+                  <BookOpen size={13} /> API docs
                 </a>
               </li>
             </ul>
           </div>
         </div>
 
-        {/* Bottom Bar */}
-        <div 
-          className="pt-6 border-t flex flex-col md:flex-row justify-between items-center gap-4"
-          style={{ borderColor: 'rgb(var(--border-color))' }}
+        <div
+          className="flex flex-wrap items-center gap-3 mt-8 pt-5 text-xs text-tertiary"
+          style={{ borderTop: '1px solid rgba(var(--border-color), 0.7)' }}
         >
-          <p 
-            style={{ color: 'rgb(var(--text-secondary))' }} 
-            className="text-xs flex items-center gap-1"
-          >
-            © {currentYear} UI Capture System. 
-          </p>
-          <div className="flex gap-6">
-            <a 
-              href="#" 
-              style={{ color: 'rgb(var(--text-secondary))' }}
-              className="text-xs hover:text-brand transition-colors"
-            >
-              Privacy Policy
-            </a>
-            <a 
-              href="#" 
-              style={{ color: 'rgb(var(--text-secondary))' }}
-              className="text-xs hover:text-brand transition-colors"
-            >
-              Terms of Service
-            </a>
-            <a 
-              href="#" 
-              style={{ color: 'rgb(var(--text-secondary))' }}
-              className="text-xs hover:text-brand transition-colors"
-            >
-              Cookie Policy
-            </a>
-          </div>
+          <span>© {year} WorkflowPro · MIT License</span>
+          <span className="ml-auto flex items-center gap-1.5">
+            <span className="live-dot" style={{ width: 7, height: 7 }} /> all systems operational
+          </span>
         </div>
       </div>
     </footer>

@@ -12,8 +12,12 @@ from app.services.task_queue import task_queue
 from app.core.config import APP_URL_MAPPINGS
 from app.utils.ssrf_protector import SSRFProtector
 from app.core.encryption import encrypt_password
+from app.automation.utils.logger import log
 
 router = APIRouter()
+
+# Module-level singleton — avoids rebuilding blocked-IP-range objects on every request.
+_ssrf = SSRFProtector()
 
 
 def _workflow_to_response(
@@ -98,12 +102,11 @@ def create_workflow(
         app_name_lower = workflow_data['app_name'].lower()
         if app_name_lower in APP_URL_MAPPINGS:
             workflow_data['start_url'] = APP_URL_MAPPINGS[app_name_lower]
-            print(f"[WORKFLOW CREATE] Auto-populated URL for {workflow_data['app_name']}: {workflow_data['start_url']}")
+            log(f"[WORKFLOW CREATE] Auto-populated URL for {workflow_data['app_name']}: {workflow_data['start_url']}")
     
     # Validate start_url for SSRF (if provided)
     if workflow_data.get('start_url'):
-        ssrf_protector = SSRFProtector()
-        is_valid, error_msg = ssrf_protector.validate_url(workflow_data['start_url'])
+        is_valid, error_msg = _ssrf.validate_url(workflow_data['start_url'])
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"Invalid start_url: {error_msg}")
     
@@ -111,10 +114,10 @@ def create_workflow(
     from app.core.config import settings
     if not workflow_data.get('login_email') and settings.LOGIN_EMAIL:
         workflow_data['login_email'] = settings.LOGIN_EMAIL
-        print(f"[WORKFLOW CREATE] Using default email from .env: {settings.LOGIN_EMAIL}")
+        log(f"[WORKFLOW CREATE] Using default email from .env: {settings.LOGIN_EMAIL}")
     if not workflow_data.get('login_password') and settings.LOGIN_PASSWORD:
         workflow_data['login_password'] = settings.LOGIN_PASSWORD
-        print("[WORKFLOW CREATE] Using default password from .env")
+        log("[WORKFLOW CREATE] Using default password from .env")
 
     if workflow_data.get('login_password'):
         workflow_data['login_password'] = encrypt_password(workflow_data['login_password'])
@@ -183,8 +186,7 @@ def update_workflow(
     update_data = workflow.model_dump(exclude_unset=True)
 
     if 'start_url' in update_data and update_data['start_url']:
-        ssrf_protector = SSRFProtector()
-        is_valid, error_msg = ssrf_protector.validate_url(update_data['start_url'])
+        is_valid, error_msg = _ssrf.validate_url(update_data['start_url'])
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"Invalid start_url: {error_msg}")
 

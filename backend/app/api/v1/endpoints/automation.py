@@ -1,18 +1,23 @@
 """
-Automation endpoint — natural language → live browser execution.
+Automation endpoint — natural language → live agentic browser execution.
 
 A single English query is all you need:
-  POST  /api/automation/run           → plan + execute, return full results
-  WS    /api/automation/run-live      → plan + execute, stream progress + screenshots
+  POST  /api/automation/run           → run the agent, return full results + report
+  WS    /api/automation/run-live      → run the agent, stream progress + screenshots
+
+Both are powered by AutomationAgent: a vision-driven loop that looks at the
+real page (screenshot + DOM digest) before every action, so it adapts to any
+site without pre-scripted selectors, and finishes with a result report.
 """
-import base64
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.services.ai_service import ai_service
-from app.services.playground_executor import PlaygroundExecutor
+from app.automation.agent.automation_agent import AutomationAgent
+from app.core.config import settings
+from app.services.llm_client import LLMNotConfiguredError
 
 router = APIRouter()
 
@@ -22,54 +27,72 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 class RunRequest(BaseModel):
-    query: str = Field(..., description="Plain English description of the automation task")
-    url: Optional[str] = Field(None, description="Target URL (optional — the AI will infer it from the query when omitted)")
+    query: str = Field(..., min_length=3, description="Plain English description of the automation task")
+    url: Optional[str] = Field(None, description="Target URL (optional — the AI infers it from the query when omitted)")
     headless: bool = Field(default=True, description="Run the browser in headless (invisible) mode")
+    max_steps: Optional[int] = Field(None, ge=1, le=60, description="Max agent steps (default from settings)")
+
+
+def _credentials() -> dict:
+    """Default automation credentials from .env (optional)."""
+    if settings.LOGIN_EMAIL and settings.LOGIN_PASSWORD:
+        return {"email": settings.LOGIN_EMAIL, "password": settings.LOGIN_PASSWORD}
+    return {}
 
 
 # ---------------------------------------------------------------------------
-# REST endpoint — plan + execute and return all results at once
+# REST endpoint — run agent and return everything at once
 # ---------------------------------------------------------------------------
 
 @router.post("/run")
 async def run_automation(request: RunRequest):
     """
-    Convert a plain English query into a live browser automation and return the results.
+    Convert a plain English query into a live agentic browser automation.
 
     Example body:
     ```json
-    {"query": "Go to github.com and search for 'fastapi'", "url": "https://github.com"}
+    {"query": "Go to Hacker News and summarize the top 5 stories"}
     ```
     """
-    parsed = await ai_service.parse_task_description(request.query, request.url)
+    query = request.query.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="query must not be empty")
 
-    executor = PlaygroundExecutor()
-    results = []
+    agent = AutomationAgent(
+        headless=request.headless,
+        credentials=_credentials(),
+        max_steps=request.max_steps or settings.AGENT_MAX_STEPS,
+    )
     try:
-        await executor.initialize(headless=request.headless)
-
-        for i, step in enumerate(parsed.steps):
-            result = await executor.execute_step(step.model_dump())
-            if result.get("screenshot"):
-                result["screenshot"] = base64.b64encode(result["screenshot"]).decode("utf-8")
-            results.append({"step_index": i, "step": step.model_dump(), "result": result})
-            if result["status"] == "error":
-                break
+        result = await agent.run(query, request.url)
+    except LLMNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-    finally:
-        await executor.cleanup()
 
-    success = bool(results) and all(r["result"]["status"] == "success" for r in results)
     return {
         "query": request.query,
-        "steps_planned": len(parsed.steps),
-        "steps_executed": len(results),
-        "success": success,
-        "confidence": parsed.confidence,
-        "requires_auth": parsed.requires_auth,
-        "warnings": parsed.warnings,
-        "results": results,
+        "rewritten_task": result.rewritten_task,
+        "success": result.success,
+        "final_message": result.final_message,
+        "report": result.report_markdown,
+        "steps_executed": result.steps_executed,
+        "final_url": result.final_url,
+        "run_id": result.run_id,
+        "extracted": result.extracted,
+        "steps": [
+            {
+                "index": s.index,
+                "action": s.action.get("action"),
+                "title": s.action.get("step_title"),
+                "status": s.status,
+                "message": s.message,
+                "url": s.url,
+                "duration_ms": s.duration_ms,
+            }
+            for s in result.steps
+        ],
+        "error": result.error,
     }
 
 
@@ -80,122 +103,93 @@ async def run_automation(request: RunRequest):
 @router.websocket("/run-live")
 async def run_automation_live(websocket: WebSocket):
     """
-    WebSocket endpoint for streaming browser automation execution.
+    WebSocket endpoint for streaming agentic browser automation.
 
     Client → Server (JSON):
-        {"query": "...", "url": "...", "headless": false}
+        {"query": "...", "url": "...", "headless": true, "max_steps": 25}
 
     Server → Client (JSON event stream):
         {"type": "planning_start",    "message": "..."}
-        {"type": "planning_complete", "steps": [...], "confidence": 0.9, ...}
+        {"type": "planning_complete", "steps": [...], "plan": {...}, "mode": "agent", ...}
         {"type": "browser_starting",  "message": "..."}
         {"type": "browser_ready"}
-        {"type": "step_start",        "step_index": 0, "step": {...}, "total_steps": N}
-        {"type": "step_complete",     "step_index": 0, "result": {...}, "total_steps": N}
-        {"type": "execution_stopped", "reason": "...", "step_index": N}   ← on first error
-        {"type": "execution_complete","success": true, "steps_executed": N}
+        {"type": "step_start",        "step_index": 0, "step": {...}}
+        {"type": "step_complete",     "step_index": 0, "step": {...}, "result": {...}}
+        {"type": "report_generating", "message": "..."}
+        {"type": "execution_complete","success": true, "report": "<markdown>", ...}
         {"type": "error",             "message": "..."}
     """
     await websocket.accept()
-    executor = PlaygroundExecutor()
+    send_lock = asyncio.Lock()
+    closed = False
 
     async def send(payload: dict):
-        try:
-            await websocket.send_json(payload)
-        except Exception:
-            pass
+        nonlocal closed
+        if closed:
+            return
+        async with send_lock:
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                closed = True
+
+    agent: Optional[AutomationAgent] = None
+    run_task: Optional[asyncio.Task] = None
 
     try:
         data = await websocket.receive_json()
-        query: str = data.get("query", "").strip()
+        query: str = (data.get("query") or "").strip()
         url: Optional[str] = data.get("url") or None
         headless: bool = bool(data.get("headless", True))
+        max_steps = data.get("max_steps")
 
         if not query:
             await send({"type": "error", "message": "query is required"})
             return
 
-        # ── Phase 1: Planning ──────────────────────────────────────────────
-        await send({"type": "planning_start", "message": "AI is planning your automation…"})
+        agent = AutomationAgent(
+            headless=headless,
+            credentials=_credentials(),
+            on_event=send,
+            max_steps=int(max_steps) if max_steps else settings.AGENT_MAX_STEPS,
+        )
 
+        run_task = asyncio.create_task(agent.run(query, url))
+
+        # While the agent runs, also listen for a client-side cancel message
+        # or disconnect so we can stop the browser promptly.
+        async def watch_client():
+            try:
+                while True:
+                    msg = await websocket.receive_json()
+                    if isinstance(msg, dict) and msg.get("type") == "cancel":
+                        run_task.cancel()
+                        return
+            except Exception:
+                # Disconnected — cancel the run.
+                if not run_task.done():
+                    run_task.cancel()
+
+        watcher = asyncio.create_task(watch_client())
         try:
-            parsed = await ai_service.parse_task_description(query, url)
+            await run_task
+        except asyncio.CancelledError:
+            await send({"type": "error", "message": "Run cancelled."})
+        except LLMNotConfiguredError as exc:
+            await send({"type": "error", "message": str(exc)})
         except Exception as exc:
-            await send({"type": "error", "message": f"Planning failed: {exc}"})
-            return
-
-        steps = [s.model_dump() for s in parsed.steps]
-
-        await send({
-            "type": "planning_complete",
-            "steps": steps,
-            "confidence": parsed.confidence,
-            "requires_auth": parsed.requires_auth,
-            "warnings": parsed.warnings,
-            "estimated_duration": parsed.estimated_duration,
-        })
-
-        if not steps:
-            await send({"type": "error", "message": "AI could not generate any steps for this query."})
-            return
-
-        # ── Phase 2: Browser start ─────────────────────────────────────────
-        await send({"type": "browser_starting", "message": "Launching browser…"})
-        try:
-            await executor.initialize(headless=headless)
-        except Exception as exc:
-            await send({"type": "error", "message": f"Browser failed to start: {exc}"})
-            return
-        await send({"type": "browser_ready"})
-
-        # ── Phase 3: Execute steps ─────────────────────────────────────────
-        executed = 0
-        failed = False
-
-        for i, step in enumerate(steps):
-            await send({
-                "type": "step_start",
-                "step_index": i,
-                "step": step,
-                "total_steps": len(steps),
-            })
-
-            result = await executor.execute_step(step)
-
-            if result.get("screenshot"):
-                result["screenshot"] = base64.b64encode(result["screenshot"]).decode("utf-8")
-
-            executed += 1
-
-            await send({
-                "type": "step_complete",
-                "step_index": i,
-                "step": step,
-                "result": result,
-                "total_steps": len(steps),
-            })
-
-            if result["status"] == "error":
-                failed = True
-                await send({
-                    "type": "execution_stopped",
-                    "reason": result["message"],
-                    "step_index": i,
-                })
-                break
-
-        # ── Phase 4: Summary ───────────────────────────────────────────────
-        await send({
-            "type": "execution_complete",
-            "success": not failed,
-            "steps_planned": len(steps),
-            "steps_executed": executed,
-            "query": query,
-        })
+            await send({"type": "error", "message": str(exc)})
+        finally:
+            watcher.cancel()
 
     except WebSocketDisconnect:
-        pass
+        if run_task and not run_task.done():
+            run_task.cancel()
     except Exception as exc:
         await send({"type": "error", "message": str(exc)})
     finally:
-        await executor.cleanup()
+        if agent:
+            try:
+                await agent.close()
+            except Exception:
+                pass

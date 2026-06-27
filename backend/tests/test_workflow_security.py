@@ -11,7 +11,13 @@ from app.models.models import User as UserModel, Workflow as WorkflowModel
 from app.core.security import get_password_hash
 from app.core.encryption import decrypt_password, resolve_stored_password
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_workflow_security.db"
+import os
+import tempfile
+
+# Keep the test DB in a temp dir — avoids littering the repo and works on
+# network-mounted filesystems where SQLite locking can fail.
+_TEST_DB = os.path.join(tempfile.mkdtemp(prefix='workflowpro_test_'), 'test_workflow_security.db')
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{_TEST_DB}"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
