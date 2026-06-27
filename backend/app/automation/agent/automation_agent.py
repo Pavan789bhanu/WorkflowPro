@@ -1009,7 +1009,16 @@ class AutomationAgent:
                 else:
                     challenge_streak = 0
                 try:
-                    action = await self._decide(task_for_agent, observation, steps, extracted, hint, len(steps))
+                    action = await asyncio.wait_for(
+                        self._decide(task_for_agent, observation, steps, extracted, hint, len(steps)),
+                        timeout=settings.AGENT_STEP_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    msg = f"LLM decision timed out after {settings.AGENT_STEP_TIMEOUT}s"
+                    log(f"[AGENT] {msg}")
+                    await self._emit({"type": "error", "message": msg})
+                    result.error = msg
+                    break
                 except Exception as exc:
                     log(f"[AGENT] decide failed: {exc}")
                     await self._emit({"type": "error", "message": f"LLM error: {exc}"})
@@ -1222,8 +1231,15 @@ class AutomationAgent:
         url_before = page.url
         t0 = time.time()
         try:
-            step.message = await self._execute(action, extracted)
+            step.message = await asyncio.wait_for(
+                self._execute(action, extracted),
+                timeout=settings.AGENT_STEP_TIMEOUT,
+            )
             step.status = "success"
+        except asyncio.TimeoutError:
+            step.status = "error"
+            step.message = f"Step timed out after {settings.AGENT_STEP_TIMEOUT}s"
+            log(f"[AGENT] step {index} timed out")
         except Exception as exc:
             step.status = "error"
             step.message = str(exc)[:300]

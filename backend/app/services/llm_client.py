@@ -38,7 +38,14 @@ class LLMNotConfiguredError(RuntimeError):
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    """Best-effort extraction of a JSON object from an LLM response."""
+    """Best-effort extraction of a JSON object from an LLM response.
+
+    Tries three strategies in order:
+    1. Parse the whole (stripped) text directly.
+    2. rfind-based slice (fast; handles most "trailing prose" cases).
+    3. Depth-tracking scan from the first '{' (handles cases where post-JSON
+       prose itself contains '}' characters, which defeats rfind).
+    """
     if not text:
         raise ValueError("Empty LLM response")
     # Strip markdown code fences if present
@@ -46,16 +53,52 @@ def _extract_json(text: str) -> Dict[str, Any]:
     if fenced:
         text = fenced.group(1)
     text = text.strip()
-    # Fast path
+
+    # Strategy 1: fast path — whole string is valid JSON
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Find the outermost JSON object
+
     start = text.find("{")
+    if start == -1:
+        raise ValueError(f"Could not parse JSON from LLM response: {text[:200]}")
+
+    # Strategy 2: first { … last } (works unless post-JSON prose has braces)
     end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return json.loads(text[start:end + 1])
+    if end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: depth-tracking — walk from first '{' to its matching '}'
+    # respecting strings so that braces inside string values are not counted.
+    depth = 0
+    in_str = False
+    escape_next = False
+    for i, ch in enumerate(text[start:], start=start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_str:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    break  # outermost {} isn't valid JSON; nothing more to try
+
     raise ValueError(f"Could not parse JSON from LLM response: {text[:200]}")
 
 

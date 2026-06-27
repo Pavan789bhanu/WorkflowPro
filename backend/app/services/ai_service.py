@@ -6,7 +6,6 @@ import json
 import re
 from typing import Dict, List, Optional, Any, Tuple
 from pydantic import BaseModel
-from app.services.video_learning_service import video_learning_service
 from app.automation.utils.logger import log
 
 
@@ -658,91 +657,6 @@ Workflow best practices:
             warnings=result.get("warnings", []),
         )
     
-    def _build_prompt(
-        self, 
-        description: str, 
-        target_url: Optional[str],
-        context: Optional[Dict[str, Any]],
-        use_video_examples: bool = True
-    ) -> str:
-        """Build prompt for LLM with optional video-based few-shot learning"""
-        
-        # If video examples are enabled, use the enhanced prompt with demonstrations
-        if use_video_examples:
-            try:
-                import asyncio
-                try:
-                    asyncio.get_running_loop()
-                    # Running inside an async context — call the sync fallback
-                    # to avoid blocking the event loop. A future refactor should
-                    # make _build_prompt itself async.
-                    enhanced_prompt = video_learning_service.generate_enhanced_prompt(description, num_examples=3)
-                except RuntimeError:
-                    # No running loop — safe to call run_until_complete.
-                    enhanced_prompt = asyncio.run(
-                        video_learning_service.generate_enhanced_prompt(description, num_examples=3)
-                    )
-                
-                # Add target URL if provided
-                if target_url:
-                    enhanced_prompt += f"\n\nTarget Website: {target_url}"
-                
-                if context:
-                    enhanced_prompt += f"\n\nAdditional Context: {json.dumps(context)}"
-                
-                return enhanced_prompt
-            except Exception as e:
-                log(f"[VIDEO LEARNING] Error generating video-enhanced prompt: {e}", level="warning")
-                log("[VIDEO LEARNING] Falling back to standard prompt", level="warning")
-                # Fall through to standard prompt
-        
-        # Standard prompt (fallback or when video examples disabled)
-        system_prompt = """You are an expert at converting natural language task descriptions into browser automation workflows.
-
-Your task is to analyze the user's description and generate a sequence of browser actions that will accomplish the task.
-
-Available actions:
-- navigate: Go to a URL
-- click: Click an element (requires selector)
-- type: Type text into an input (requires selector and text)
-- wait: Wait for an element or time (requires selector or duration)
-- select: Select option from dropdown (requires selector and value)
-- scroll: Scroll to an element or position
-- extract: Extract data from elements (requires selector)
-- screenshot: Take a screenshot
-- execute_script: Execute JavaScript code
-
-For each step, provide:
-1. type: The action type
-2. selector: CSS selector or XPath (use semantic selectors like data-testid, aria-label when possible)
-3. value: Text to type or option to select
-4. description: Human-readable description of what this step does
-
-Also provide:
-- confidence: Your confidence in this workflow (0-1)
-- estimated_duration: Estimated time in seconds
-- requires_auth: Whether authentication is needed
-- warnings: Any potential issues or edge cases
-
-Respond ONLY with valid JSON matching this schema:
-{
-  "steps": [...],
-  "confidence": 0.9,
-  "estimated_duration": 30,
-  "requires_auth": false,
-  "warnings": []
-}"""
-
-        user_prompt = f"""Task Description: {description}"""
-        
-        if target_url:
-            user_prompt += f"\nTarget Website: {target_url}"
-            
-        if context:
-            user_prompt += f"\nAdditional Context: {json.dumps(context)}"
-            
-        return f"{system_prompt}\n\n{user_prompt}"
-    
     def _mock_parse(self, description: str, target_url: Optional[str]) -> ParsedWorkflow:
         """
         Autonomous AI workflow parser that:
@@ -1152,29 +1066,6 @@ Respond ONLY with valid JSON matching this schema:
             warnings.append("🔐 Requires authentication. Ensure credentials are configured.")
         
         return warnings
-    
-    def _identify_intent(self, description_lower: str) -> str:
-        """
-        Identify user intent from query without hardcoding apps.
-        
-        Returns intent category, not app-specific assumptions.
-        """
-        if ("create" in description_lower and "project" in description_lower) or \
-           ("new" in description_lower and "project" in description_lower) or \
-           ("add" in description_lower and "project" in description_lower):
-            return "create_project"
-        
-        if "login" in description_lower or "sign in" in description_lower or "authenticate" in description_lower:
-            return "login"
-        
-        if "search" in description_lower or "find" in description_lower or "look for" in description_lower:
-            return "search"
-        
-        if "extract" in description_lower or "scrape" in description_lower or "get data" in description_lower:
-            return "extract"
-        
-        # Default: generic navigation
-        return "navigate"
     
     async def suggest_next_actions(
         self,
