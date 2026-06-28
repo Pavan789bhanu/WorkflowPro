@@ -478,3 +478,48 @@ def test_early_stop_with_data_is_partial_success(agent):
     assert result.success is True          # data exists → partial success
     assert len(result.extracted) == 1
     assert "gathered" in result.final_message
+
+
+def test_transient_llm_error_retried_once(agent):
+    """A single transient LLM error must NOT kill the run — the agent retries.
+    Only two consecutive errors should terminate the run."""
+    class TransientErrorLLM(FakeLLM):
+        """Fails once on decide (call 2), succeeds on retry (call 3), then done."""
+        async def chat_json(self, messages, system=None, max_tokens=0, temperature=0.0):
+            self.json_calls += 1
+            if self.json_calls == 1:
+                return {"start_url": "https://example.com", "outline": ["go"]}
+            if self.json_calls == 2:
+                raise ConnectionError("transient network hiccup")
+            if self.json_calls == 3:
+                return {"action": "extract", "value": "page", "label": "page_text",
+                        "step_title": "Extract", "reason": "recovered"}
+            return {"action": "done", "reason": "Task complete."}
+
+    agent._llm = TransientErrorLLM()
+    result = asyncio.run(agent.run("read the page"))
+
+    # Run must complete successfully despite the one transient error
+    assert result.success is True
+    assert len(result.extracted) == 1
+    assert result.error is None
+
+
+def test_two_consecutive_llm_errors_terminate_run(agent):
+    """Two consecutive decide failures must stop the run to avoid an infinite
+    retry spiral.  result.error should be populated."""
+    class DoubleFailLLM(FakeLLM):
+        async def chat_json(self, messages, system=None, max_tokens=0, temperature=0.0):
+            self.json_calls += 1
+            if self.json_calls == 1:
+                return {"start_url": "https://example.com", "outline": ["go"]}
+            raise RuntimeError("persistent LLM failure")
+
+    agent._llm = DoubleFailLLM()
+    result = asyncio.run(agent.run("some task"))
+
+    assert result.success is False
+    assert result.error is not None
+    assert "persistent LLM failure" in result.error
+    # Only 1 plan + 2 decide attempts (streak=2 → break)
+    assert agent._llm.json_calls <= 4
