@@ -32,6 +32,7 @@ def _markdown_to_html(md: str) -> str:
     """Tiny dependency-free markdown → HTML for the report page."""
     out = []
     in_list = False
+    list_tag = "ul"  # "ul" for bullets, "ol" for numbered items
     for raw_line in md.splitlines():
         line = html.escape(raw_line.rstrip())
         # inline: bold / code
@@ -43,11 +44,26 @@ def _markdown_to_html(md: str) -> str:
             line_html = f"<h2>{line[3:]}</h2>"
         elif line.startswith("# "):
             line_html = f"<h1>{line[2:]}</h1>"
-        elif re.match(r"^\s*([-*]|\d+\.)\s+", line):
-            item = re.sub(r"^\s*([-*]|\d+\.)\s+", "", line)
-            if not in_list:
-                out.append("<ul>")
+        elif re.match(r"^\s*\d+\.\s+", line):
+            item = re.sub(r"^\s*\d+\.\s+", "", line)
+            new_tag = "ol"
+            if not in_list or list_tag != new_tag:
+                if in_list:
+                    out.append(f"</{list_tag}>")
+                out.append(f"<{new_tag}>")
                 in_list = True
+                list_tag = new_tag
+            out.append(f"<li>{item}</li>")
+            continue
+        elif re.match(r"^\s*[-*]\s+", line):
+            item = re.sub(r"^\s*[-*]\s+", "", line)
+            new_tag = "ul"
+            if not in_list or list_tag != new_tag:
+                if in_list:
+                    out.append(f"</{list_tag}>")
+                out.append(f"<{new_tag}>")
+                in_list = True
+                list_tag = new_tag
             out.append(f"<li>{item}</li>")
             continue
         elif line.strip() == "":
@@ -55,12 +71,12 @@ def _markdown_to_html(md: str) -> str:
         else:
             line_html = f"<p>{line}</p>"
         if in_list:
-            out.append("</ul>")
+            out.append(f"</{list_tag}>")
             in_list = False
         if line_html:
             out.append(line_html)
     if in_list:
-        out.append("</ul>")
+        out.append(f"</{list_tag}>")
     return "\n".join(out)
 
 

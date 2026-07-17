@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import re
 import time
@@ -281,6 +282,7 @@ class AutomationAgent:
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self._last_dom_len: Optional[int] = None
 
     # ------------------------------------------------------------------
     # Event helpers
@@ -706,7 +708,6 @@ class AutomationAgent:
             return f"Selected '{value}'"
 
         if kind == "extract":
-            import hashlib
             label = action.get("label") or f"extract_{len(extracted) + 1}"
             if str(action.get("value") or "") == "page" or action.get("element_id") is None:
                 content = await page.evaluate(PAGE_TEXT_JS)
@@ -984,6 +985,7 @@ class AutomationAgent:
         steps_since_progress = 0      # progress = new URL, or successful extract/type/select
         challenge_streak = 0          # consecutive observations on an anti-bot page
         last_url = ""
+        decide_error_streak = 0       # consecutive LLM decide failures (transient error guard)
         try:
             while len(steps) < self.max_steps:
                 if time.time() - started > settings.MAX_INACTIVITY_SECONDS * 10:
@@ -1013,6 +1015,7 @@ class AutomationAgent:
                         self._decide(task_for_agent, observation, steps, extracted, hint, len(steps)),
                         timeout=settings.AGENT_STEP_TIMEOUT,
                     )
+                    decide_error_streak = 0
                 except asyncio.TimeoutError:
                     msg = f"LLM decision timed out after {settings.AGENT_STEP_TIMEOUT}s"
                     log(f"[AGENT] {msg}")
@@ -1020,10 +1023,17 @@ class AutomationAgent:
                     result.error = msg
                     break
                 except Exception as exc:
-                    log(f"[AGENT] decide failed: {exc}")
-                    await self._emit({"type": "error", "message": f"LLM error: {exc}"})
-                    result.error = str(exc)
-                    break
+                    decide_error_streak += 1
+                    log(f"[AGENT] decide failed (streak={decide_error_streak}): {exc}")
+                    if decide_error_streak >= 2:
+                        # Two consecutive LLM failures — almost certainly not transient.
+                        await self._emit({"type": "error", "message": f"LLM error: {exc}"})
+                        result.error = str(exc)
+                        break
+                    # First failure: could be a transient network hiccup. Wait briefly
+                    # and retry by continuing to the next loop iteration (re-observe first).
+                    await asyncio.sleep(2)
+                    continue
                 hint = None
 
                 kind = (action.get("action") or "").lower()
@@ -1261,7 +1271,7 @@ class AutomationAgent:
             dom_len = await page.evaluate("() => document.body ? document.body.innerHTML.length : 0")
         except Exception:
             dom_len = -1
-        prev_dom_len = getattr(self, "_last_dom_len", None)
+        prev_dom_len = self._last_dom_len
         self._last_dom_len = dom_len
         step.page_changed = (page.url != url_before) or (
             prev_dom_len is not None and dom_len >= 0 and abs(dom_len - prev_dom_len) > 200
