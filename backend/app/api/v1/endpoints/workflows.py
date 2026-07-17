@@ -12,9 +12,10 @@ from app.services.task_queue import task_queue
 from app.core.config import APP_URL_MAPPINGS
 from app.utils.ssrf_protector import SSRFProtector
 from app.core.encryption import encrypt_password
-from app.automation.utils.logger import log
+from app.automation.utils.logger import get_logger
 
 router = APIRouter()
+logger = get_logger("workflowpro.workflows")
 
 # Module-level singleton — avoids rebuilding blocked-IP-range objects on every request.
 _ssrf = SSRFProtector()
@@ -102,23 +103,17 @@ def create_workflow(
         app_name_lower = workflow_data['app_name'].lower()
         if app_name_lower in APP_URL_MAPPINGS:
             workflow_data['start_url'] = APP_URL_MAPPINGS[app_name_lower]
-            log(f"[WORKFLOW CREATE] Auto-populated URL for {workflow_data['app_name']}: {workflow_data['start_url']}")
+            logger.info("Auto-populated URL for %s: %s", workflow_data['app_name'], workflow_data['start_url'])
     
     # Validate start_url for SSRF (if provided)
     if workflow_data.get('start_url'):
         is_valid, error_msg = _ssrf.validate_url(workflow_data['start_url'])
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"Invalid start_url: {error_msg}")
-    
-    # Auto-populate login credentials from .env if not provided
-    from app.core.config import settings
-    if not workflow_data.get('login_email') and settings.LOGIN_EMAIL:
-        workflow_data['login_email'] = settings.LOGIN_EMAIL
-        log(f"[WORKFLOW CREATE] Using default email from .env: {settings.LOGIN_EMAIL}")
-    if not workflow_data.get('login_password') and settings.LOGIN_PASSWORD:
-        workflow_data['login_password'] = settings.LOGIN_PASSWORD
-        log("[WORKFLOW CREATE] Using default password from .env")
 
+    # Login credentials are per-workflow and user-supplied only. We deliberately
+    # do NOT fall back to server-side .env credentials here — that would attach
+    # the operator's personal login to workflows owned by any user.
     if workflow_data.get('login_password'):
         workflow_data['login_password'] = encrypt_password(workflow_data['login_password'])
 

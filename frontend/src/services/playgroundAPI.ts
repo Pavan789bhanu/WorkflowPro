@@ -7,6 +7,19 @@ import { API_BASE, getWsBase } from './baseUrls';
 
 const API_BASE_URL = `${API_BASE}/api`;
 
+/**
+ * Build request headers with the stored JWT attached. The playground and AI
+ * endpoints are authenticated, so every call must carry the bearer token.
+ */
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = localStorage.getItem('auth_token');
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  };
+}
+
 export interface WorkflowStep {
   type: 'navigate' | 'click' | 'type' | 'wait' | 'select' | 'extract' | 'screenshot';
   selector?: string;
@@ -133,7 +146,7 @@ class PlaygroundAPI {
   async parseTask(description: string, targetUrl?: string): Promise<ParsedWorkflow> {
     const response = await fetch(`${this.baseUrl}/ai/parse-task`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         description,
         target_url: targetUrl,
@@ -154,7 +167,7 @@ class PlaygroundAPI {
   async executeStep(step: WorkflowStep): Promise<ExecutionResult> {
     const response = await fetch(`${this.baseUrl}/playground/execute-step`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         step,
         continue_from_current: true,
@@ -174,7 +187,7 @@ class PlaygroundAPI {
   async executeWorkflow(steps: WorkflowStep[], headless: boolean = false): Promise<WorkflowExecutionResult> {
     const response = await fetch(`${this.baseUrl}/playground/execute-workflow`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         steps,
         headless,
@@ -194,7 +207,7 @@ class PlaygroundAPI {
   async validateSelector(selector: string): Promise<SelectorValidation> {
     const response = await fetch(`${this.baseUrl}/playground/validate-selector`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ selector }),
     });
 
@@ -209,7 +222,9 @@ class PlaygroundAPI {
    * Get current page state
    */
   async getPageState(): Promise<{ url: string; title: string; viewport: any }> {
-    const response = await fetch(`${this.baseUrl}/playground/page-state`);
+    const response = await fetch(`${this.baseUrl}/playground/page-state`, {
+      headers: authHeaders(),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to get page state: ${response.statusText}`);
@@ -224,6 +239,7 @@ class PlaygroundAPI {
   async initializeBrowser(headless: boolean = false): Promise<void> {
     const response = await fetch(`${this.baseUrl}/playground/initialize?headless=${headless}`, {
       method: 'POST',
+      headers: authHeaders(),
     });
 
     if (!response.ok) {
@@ -237,6 +253,7 @@ class PlaygroundAPI {
   async cleanupBrowser(): Promise<void> {
     const response = await fetch(`${this.baseUrl}/playground/cleanup`, {
       method: 'POST',
+      headers: authHeaders(),
     });
 
     if (!response.ok) {
@@ -250,7 +267,7 @@ class PlaygroundAPI {
   async validateWorkflow(steps: any[]): Promise<any> {
     const response = await fetch(`${this.baseUrl}/ai/validate-workflow`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ steps }),
     });
 
@@ -269,7 +286,9 @@ class PlaygroundAPI {
     if (category) params.append('category', category);
     if (search) params.append('search', search);
 
-    const response = await fetch(`${this.baseUrl}/ai/workflow-templates?${params}`);
+    const response = await fetch(`${this.baseUrl}/ai/workflow-templates?${params}`, {
+      headers: authHeaders(),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to get templates: ${response.statusText}`);
@@ -284,13 +303,9 @@ class PlaygroundAPI {
    * attaches the JWT and matches the backend schema. Kept for compatibility.
    */
   async saveWorkflow(name: string, description: string, steps: WorkflowStep[], appName = 'web'): Promise<unknown> {
-    const token = localStorage.getItem('auth_token');
     const response = await fetch(`${this.baseUrl}/workflows/`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: authHeaders(),
       body: JSON.stringify({
         name,
         description,
@@ -319,7 +334,7 @@ class PlaygroundAPI {
   ): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/playground/feedback`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         original_task: originalTask,
         generated_steps: generatedSteps,
@@ -343,7 +358,7 @@ class PlaygroundAPI {
   async getSuggestions(taskDescription: string, url?: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/playground/suggestions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         task_description: taskDescription,
         url,
@@ -361,7 +376,9 @@ class PlaygroundAPI {
    * Get learning statistics
    */
   async getLearningStats(): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/playground/learning-stats`);
+    const response = await fetch(`${this.baseUrl}/playground/learning-stats`, {
+      headers: authHeaders(),
+    });
 
     if (!response.ok) {
       throw new Error(`Failed to get learning stats: ${response.statusText}`);
@@ -385,7 +402,8 @@ class PlaygroundAPI {
     headless: boolean,
     onEvent: (event: AutomationEvent) => void
   ): () => void {
-    const wsUrl = `${getWsBase()}/api/automation/run-live`;
+    const token = localStorage.getItem('auth_token');
+    const wsUrl = `${getWsBase()}/api/automation/run-live${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {

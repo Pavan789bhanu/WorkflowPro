@@ -5,9 +5,10 @@ from sqlalchemy import func, case
 from app.core.database import get_db
 from app.models.models import Workflow, Execution, ExecutionStatus, User
 from app.api.v1.endpoints.auth import get_current_user
-from app.automation.utils.logger import log
+from app.automation.utils.logger import get_logger
 
 router = APIRouter()
+logger = get_logger("workflowpro.analytics")
 
 @router.get("/overview")
 def get_analytics_overview(
@@ -92,7 +93,7 @@ def get_analytics_overview(
                     total_duration_seconds += duration_seconds
                     valid_count += 1
             except Exception as e:
-                log(f"[ANALYTICS] Error parsing execution timestamps: {e}")
+                logger.debug("Error parsing execution timestamps: %s", e)
                 continue
     
     average_duration_seconds = total_duration_seconds / valid_count if valid_count > 0 else 0

@@ -14,8 +14,10 @@ from app.schemas.schemas import Execution, ExecutionCreate, ExecutionResponse
 from app.api.v1.endpoints.auth import get_current_user
 from app.services.workflow_executor import execute_workflow
 from app.services.task_queue import task_queue
+from app.automation.utils.logger import get_logger
 
 router = APIRouter()
+logger = get_logger("workflowpro.executions")
 
 
 def get_current_user_flexible(
@@ -279,7 +281,7 @@ def submit_execution_feedback(
         )
     except Exception as learn_err:
         # Feedback storage on the execution still proceeds
-        print(f"[FEEDBACK] learner error: {learn_err}")
+        logger.warning("Feedback learner error: %s", learn_err)
 
     # Persist feedback on the execution row (inside the result JSON)
     result_data["user_feedback"] = {

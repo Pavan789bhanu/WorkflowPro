@@ -1,16 +1,22 @@
 """
 Playground API endpoints for testing and running workflows
 """
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import json
 import base64
 
+from app.api.v1.endpoints.auth import authenticate_token, get_current_user
+from app.core.database import SessionLocal
 from app.services.playground_executor import playground_executor
 from app.services.workflow_learner import WorkflowLearner
 
-router = APIRouter()
+# Every HTTP route here drives a real browser / LLM, so require auth on all of
+# them. The WebSocket lives on a separate router (no header dependency) and
+# authenticates its handshake via a `?token=` query param instead.
+router = APIRouter(dependencies=[Depends(get_current_user)])
+ws_router = APIRouter()
 workflow_learner = WorkflowLearner()
 
 
@@ -182,7 +188,7 @@ async def cleanup_browser():
         raise HTTPException(status_code=500, detail=f"Failed to cleanup browser: {str(e)}")
 
 
-@router.websocket("/ws")
+@ws_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for real-time workflow execution
@@ -190,7 +196,18 @@ async def websocket_endpoint(websocket: WebSocket):
     Clients can send steps and receive real-time updates
     """
     await websocket.accept()
-    
+
+    # Authenticate the socket via ?token= (browsers can't set WS headers).
+    db = SessionLocal()
+    try:
+        user = authenticate_token(websocket.query_params.get("token"), db)
+    finally:
+        db.close()
+    if user is None:
+        await websocket.send_json({"type": "error", "message": "Authentication required."})
+        await websocket.close(code=1008)
+        return
+
     try:
         # Initialize browser for this session
         await playground_executor.initialize(headless=False)
