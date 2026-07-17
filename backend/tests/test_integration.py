@@ -419,7 +419,8 @@ class TestHealthEndpoints:
         response = client.get("/api/health")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "healthy"
+        # /api/health now reports readiness (ready | degraded) plus dependencies.
+        assert data["status"] in ("ready", "degraded")
         assert data["database"] in ("healthy", "unavailable")
 
 
@@ -491,3 +492,58 @@ class TestExecutionFeedback:
         r = client.post("/api/executions/999/feedback",
                         json={"rating": "meh"}, headers=auth_headers)
         assert r.status_code == 422  # invalid rating value
+
+
+class TestAgentRouterAuth:
+    """Agent-driving routers must never be reachable without authentication.
+
+    These endpoints spend LLM tokens and control a real browser, so an
+    unauthenticated caller must be rejected (regression guard for the
+    production-hardening pass)."""
+
+    UNAUTHED_ENDPOINTS = [
+        ("post", "/api/automation/run", {"query": "go to example.com"}),
+        ("post", "/api/playground/execute-step", {"step": {}}),
+        ("post", "/api/playground/execute-workflow", {"steps": []}),
+        ("get", "/api/playground/learning-stats", None),
+        ("post", "/api/ai/parse-task", {"description": "do a thing"}),
+        ("get", "/api/ai/workflow-templates", None),
+        ("get", "/api/video-learning/videos", None),
+    ]
+
+    def test_agent_routers_reject_anonymous(self, client):
+        for method, path, body in self.UNAUTHED_ENDPOINTS:
+            resp = getattr(client, method)(path, json=body) if body is not None else getattr(client, method)(path)
+            assert resp.status_code == 401, f"{method.upper()} {path} should require auth, got {resp.status_code}"
+
+    def test_agent_routers_allow_authenticated(self, client, auth_headers):
+        # parse-task is safe to call (no live browser) and should pass auth,
+        # returning something other than 401/403.
+        resp = client.post("/api/ai/parse-task",
+                           json={"description": "open example.com and read the title"},
+                           headers=auth_headers)
+        assert resp.status_code not in (401, 403), resp.text
+
+
+class TestHealthProbes:
+    """Liveness and readiness probes behave as expected."""
+
+    def test_liveness(self, client):
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "healthy"
+
+    def test_readiness_reports_dependencies(self, client):
+        r = client.get("/health/ready")
+        assert r.status_code in (200, 503)
+        body = r.json()
+        assert "database" in body and "llm_provider" in body
+
+    def test_request_id_header_present(self, client):
+        r = client.get("/health")
+        assert r.headers.get("X-Request-ID"), "every response should carry a request id"
+
+    def test_security_headers_present(self, client):
+        r = client.get("/health")
+        assert r.headers.get("X-Content-Type-Options") == "nosniff"
+        assert r.headers.get("X-Frame-Options") == "DENY"

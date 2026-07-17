@@ -189,6 +189,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
         execution.started_at = _utcnow()
         db.commit()
 
+        owner_id = workflow.owner_id
         await manager.send_execution_update(
             execution_id=execution_id,
             event="started",
@@ -198,6 +199,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 "status": "RUNNING",
                 "started_at": execution.started_at.isoformat(),
             },
+            user_id=owner_id,
         )
 
         # Resolve task + URL
@@ -207,12 +209,13 @@ async def execute_workflow(execution_id: int, db: Session = None):
             url = APP_URL_MAPPINGS.get(app_name.lower(), "")
         task = workflow.description or f"Complete the workflow '{workflow.name}'" + (f" in {app_name}" if app_name else "")
 
-        # Credentials: workflow-specific > .env defaults
-        auth_email = workflow.login_email or settings.LOGIN_EMAIL
-        auth_password = resolve_stored_password(workflow.login_password) or settings.LOGIN_PASSWORD
+        # Credentials: workflow-specific only. We never fall back to server-side
+        # .env credentials — those belong to the operator, not to workflow owners.
+        auth_email = workflow.login_email
+        auth_password = resolve_stored_password(workflow.login_password)
         credentials = {"email": auth_email, "password": auth_password} if auth_email and auth_password else {}
 
-        # Stream agent events to all websocket clients (without heavy screenshots)
+        # Stream agent events to the owning user only (without heavy screenshots)
         async def forward_event(event: dict):
             payload = dict(event)
             result = payload.get("result")
@@ -226,6 +229,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 execution_id=execution_id,
                 event="progress",
                 data=payload,
+                user_id=owner_id,
             )
 
         agent = AutomationAgent(
@@ -250,6 +254,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 execution_id=execution_id,
                 event="failed",
                 data={"status": "FAILED", "error": str(exec_error), "success": False},
+                user_id=owner_id,
             )
             raise
 
@@ -290,6 +295,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 "success": result.success,
                 "message": result.final_message,
             },
+            user_id=owner_id,
         )
         logger.info(
             "Execution %s %s in %ss",
