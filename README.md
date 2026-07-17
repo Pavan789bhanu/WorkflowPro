@@ -208,6 +208,17 @@ cd ui_capture_system
 
 Open **http://localhost:5173**. Set `DEFAULT_HEADLESS=false` in `.env` to watch the Chromium window live. Stop with `./stop.sh`.
 
+### Stakeholder demo (local)
+
+With backend + frontend already running:
+
+```bash
+cd backend && python scripts/seed_demo_data.py --reset   # polish dashboard/analytics
+cd .. && ./scripts/demo_ready.sh                        # health check + talk track
+```
+
+Login: `admin@example.com` / `admin123`. Wow moment: **Playground → Check HN headlines → Run Automation**.
+
 ### Choosing your LLM provider
 
 ```bash
