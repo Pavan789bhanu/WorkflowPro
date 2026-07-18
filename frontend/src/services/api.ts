@@ -10,6 +10,11 @@ import { API_BASE, getWsBase } from './baseUrls';
 const API_BASE_URL = API_BASE;
 const WS_BASE_URL = getWsBase();
 
+/** A parsed JSON message received over the realtime WebSocket. */
+export type WsPayload = Record<string, unknown>;
+/** Listener invoked with a realtime WebSocket message. */
+export type WsListener = (data: WsPayload) => void;
+
 /**
  * Turn a FastAPI error body into a human-readable string.
  *
@@ -69,7 +74,7 @@ export interface Execution {
   total_steps?: number;
   screenshots?: string[];
   error_message?: string | null;
-  result?: any;
+  result?: unknown;
 }
 
 export interface AnalyticsOverview {
@@ -99,7 +104,7 @@ class APIClient {
   private baseURL: string;
   private wsURL: string;
   private ws: WebSocket | null = null;
-  private wsListeners: Map<string, Set<(data: any) => void>> = new Map();
+  private wsListeners: Map<string, Set<WsListener>> = new Map();
   private reconnectTimer: number | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -327,15 +332,16 @@ class APIClient {
 
   connectWebSocket() {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected');
       return;
     }
 
     try {
-      this.ws = new WebSocket(`${this.wsURL}/ws`);
+      // The realtime socket is authenticated — the browser WebSocket API can't
+      // set headers, so the JWT is passed as a query param.
+      const tokenParam = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+      this.ws = new WebSocket(`${this.wsURL}/ws${tokenParam}`);
 
       this.ws.onopen = () => {
-        console.log('WebSocket connected');
         this.reconnectAttempts = 0;
 
         // Send heartbeat every 30 seconds (JSON — the server parses JSON pings)
@@ -355,22 +361,20 @@ class APIClient {
           // workflow_id alongside the payload (previously only `.data`
           // was forwarded and the IDs were lost).
           this.notifyListeners(message.type, message);
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
+        } catch {
+          // ignore malformed messages
         }
       };
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+      this.ws.onerror = () => {
+        // Surfaced via the reconnect flow; no noisy console output.
       };
 
       this.ws.onclose = () => {
-        console.log('WebSocket disconnected');
         this.ws = null;
         this.attemptReconnect();
       };
-    } catch (error) {
-      console.error('Error connecting WebSocket:', error);
+    } catch {
       this.attemptReconnect();
     }
   }
@@ -389,15 +393,12 @@ class APIClient {
 
   private attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
       return;
     }
 
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    
-    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
-    
+
     this.reconnectTimer = window.setTimeout(() => {
       this.connectWebSocket();
     }, delay) as unknown as number;
@@ -407,21 +408,21 @@ class APIClient {
   // WebSocket Event Listeners
   // ============================================================================
 
-  on(event: string, callback: (data: any) => void) {
+  on<T = WsPayload>(event: string, callback: (data: T) => void) {
     if (!this.wsListeners.has(event)) {
       this.wsListeners.set(event, new Set());
     }
-    this.wsListeners.get(event)!.add(callback);
+    this.wsListeners.get(event)!.add(callback as WsListener);
   }
 
-  off(event: string, callback: (data: any) => void) {
+  off<T = WsPayload>(event: string, callback: (data: T) => void) {
     const listeners = this.wsListeners.get(event);
     if (listeners) {
-      listeners.delete(callback);
+      listeners.delete(callback as WsListener);
     }
   }
 
-  private notifyListeners(event: string, data: any) {
+  private notifyListeners(event: string, data: WsPayload) {
     const listeners = this.wsListeners.get(event);
     if (listeners) {
       listeners.forEach((callback) => callback(data));

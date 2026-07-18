@@ -36,7 +36,7 @@ export interface StepResult {
   screenshot?: string;
   duration_ms: number;
   timestamp: string;
-  data?: any;
+  data?: unknown;
 }
 
 export interface ExecutionResult {
@@ -221,7 +221,7 @@ class PlaygroundAPI {
   /**
    * Get current page state
    */
-  async getPageState(): Promise<{ url: string; title: string; viewport: any }> {
+  async getPageState(): Promise<{ url: string; title: string; viewport: unknown }> {
     const response = await fetch(`${this.baseUrl}/playground/page-state`, {
       headers: authHeaders(),
     });
@@ -264,7 +264,7 @@ class PlaygroundAPI {
   /**
    * Validate workflow steps
    */
-  async validateWorkflow(steps: any[]): Promise<any> {
+  async validateWorkflow(steps: WorkflowStep[]): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/ai/validate-workflow`, {
       method: 'POST',
       headers: authHeaders(),
@@ -281,7 +281,7 @@ class PlaygroundAPI {
   /**
    * Get workflow templates
    */
-  async getTemplates(category?: string, search?: string): Promise<any> {
+  async getTemplates(category?: string, search?: string): Promise<unknown> {
     const params = new URLSearchParams();
     if (category) params.append('category', category);
     if (search) params.append('search', search);
@@ -355,7 +355,7 @@ class PlaygroundAPI {
   /**
    * Get workflow suggestions based on learning
    */
-  async getSuggestions(taskDescription: string, url?: string): Promise<any> {
+  async getSuggestions(taskDescription: string, url?: string): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/playground/suggestions`, {
       method: 'POST',
       headers: authHeaders(),
@@ -375,7 +375,7 @@ class PlaygroundAPI {
   /**
    * Get learning statistics
    */
-  async getLearningStats(): Promise<any> {
+  async getLearningStats(): Promise<unknown> {
     const response = await fetch(`${this.baseUrl}/playground/learning-stats`, {
       headers: authHeaders(),
     });

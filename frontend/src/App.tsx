@@ -6,6 +6,7 @@ import { NotificationProvider } from './contexts/NotificationContext';
 import { PlaygroundProvider } from './contexts/PlaygroundContext';
 import { lazy, Suspense } from 'react';
 import Layout from './components/layout/Layout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import Dashboard from './pages/Dashboard';
 import LoginPage from './pages/LoginPage';
 import LandingPage from './pages/LandingPage';
@@ -101,19 +102,21 @@ function AppRoutes() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthProvider>
-          <NotificationProvider>
-            <PlaygroundProvider>
-              <BrowserRouter>
-                <AppRoutes />
-              </BrowserRouter>
-            </PlaygroundProvider>
-          </NotificationProvider>
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <AuthProvider>
+            <NotificationProvider>
+              <PlaygroundProvider>
+                <BrowserRouter>
+                  <AppRoutes />
+                </BrowserRouter>
+              </PlaygroundProvider>
+            </NotificationProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
