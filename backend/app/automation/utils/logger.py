@@ -27,6 +27,10 @@ def _mask_sensitive_data(message: str) -> str:
     return message
 
 
+# Alias expected by tests / origin/dev call sites.
+_mask_sensitive = _mask_sensitive_data
+
+
 class _MaskingFilter(logging.Filter):
     """Logging filter that scrubs secrets from every record's message."""
 
