@@ -10,6 +10,29 @@ import { API_BASE, getWsBase } from './baseUrls';
 const API_BASE_URL = API_BASE;
 const WS_BASE_URL = getWsBase();
 
+/**
+ * Turn a FastAPI error body into a human-readable string.
+ *
+ * FastAPI returns `detail` either as a plain string (our HTTPExceptions) or as
+ * an array of validation objects (`[{ msg, loc, ... }]`). Naively rendering the
+ * latter produced "[object Object]" in the UI — this flattens both shapes.
+ */
+export function normalizeErrorDetail(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const detail = (error as { detail?: unknown }).detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d)))
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (detail && typeof detail === 'object' && 'msg' in detail) {
+    return String((detail as { msg: unknown }).msg);
+  }
+  return '';
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -88,7 +111,6 @@ class APIClient {
   }
 
   setToken(token: string | null) {
-    console.log('[APIClient] Setting token:', token ? `${token.substring(0, 20)}...` : 'null');
     this.token = token;
   }
 
@@ -101,9 +123,7 @@ class APIClient {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
-    
-    console.log(`[APIClient] 🌐 REQUEST: ${options.method || 'GET'} ${url}`);
-    
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string> || {}),
@@ -111,39 +131,26 @@ class APIClient {
 
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
-      console.log(`[APIClient] ✓ Auth token attached (${this.token.substring(0, 20)}...)`);
-    } else {
-      console.warn(`[APIClient] ⚠️  NO AUTH TOKEN - Request will likely fail with 401`);
     }
-    
+
     const config: RequestInit = {
       ...options,
       headers,
     };
 
-    try {
-      console.log(`[APIClient] 📤 Sending request...`);
-      const response = await fetch(url, config);
-      console.log(`[APIClient] 📥 Response: ${response.status} ${response.statusText}`);
+    const response = await fetch(url, config);
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: response.statusText }));
-        console.error(`[APIClient] ❌ Request failed: ${error.detail || response.statusText}`);
-        // Stale/invalid token → tell the app so it can log out cleanly
-        // instead of rendering "logged-in" pages where every call fails.
-        if (response.status === 401 && this.token && !endpoint.includes('/auth/login')) {
-          window.dispatchEvent(new Event('auth:unauthorized'));
-        }
-        throw new Error(error.detail || `HTTP ${response.status}: ${response.statusText}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      // Stale/invalid token → tell the app so it can log out cleanly
+      // instead of rendering "logged-in" pages where every call fails.
+      if (response.status === 401 && this.token && !endpoint.includes('/auth/login')) {
+        window.dispatchEvent(new Event('auth:unauthorized'));
       }
-
-      const data = await response.json();
-      console.log(`[APIClient] ✅ Request successful`);
-      return data;
-    } catch (error) {
-      console.error(`[APIClient] 💥 Exception during request to ${endpoint}:`, error);
-      throw error;
+      throw new Error(normalizeErrorDetail(error) || `HTTP ${response.status}: ${response.statusText}`);
     }
+
+    return response.json();
   }
 
   // ============================================================================
@@ -281,13 +288,7 @@ class APIClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }));
-      const message =
-        typeof error.detail === 'string'
-          ? error.detail
-          : Array.isArray(error.detail)
-            ? error.detail.map((d: { msg?: string }) => d.msg ?? 'Invalid input').join(', ')
-            : 'Login failed';
-      throw new Error(message);
+      throw new Error(normalizeErrorDetail(error) || 'Login failed');
     }
 
     return response.json();

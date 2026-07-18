@@ -12,11 +12,15 @@ site without pre-scripted selectors, and finishes with a result report.
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+
 from pydantic import BaseModel, Field
 
 from app.automation.agent.automation_agent import AutomationAgent
+from app.api.v1.endpoints.auth import authenticate_token, get_current_user
 from app.core.config import settings
+from app.core.database import SessionLocal
+from app.models.models import User as UserModel
 from app.services.llm_client import LLMNotConfiguredError
 
 router = APIRouter()
@@ -31,12 +35,20 @@ class RunRequest(BaseModel):
     url: Optional[str] = Field(None, description="Target URL (optional — the AI infers it from the query when omitted)")
     headless: bool = Field(default=True, description="Run the browser in headless (invisible) mode")
     max_steps: Optional[int] = Field(None, ge=1, le=60, description="Max agent steps (default from settings)")
+    login_email: Optional[str] = Field(None, description="Optional login email to use if the task needs to sign in")
+    login_password: Optional[str] = Field(None, description="Optional login password (used only for this run, never logged)")
 
 
-def _credentials() -> dict:
-    """Default automation credentials from .env (optional)."""
-    if settings.LOGIN_EMAIL and settings.LOGIN_PASSWORD:
-        return {"email": settings.LOGIN_EMAIL, "password": settings.LOGIN_PASSWORD}
+def _credentials(request: "RunRequest") -> dict:
+    """Login credentials for this run.
+
+    Credentials are taken ONLY from the explicit per-request fields. We do NOT
+    fall back to server-side `.env` credentials: an agent can be steered to any
+    site, so injecting the operator's personal credentials into arbitrary login
+    forms would be a credential-exfiltration risk.
+    """
+    if request.login_email and request.login_password:
+        return {"email": request.login_email, "password": request.login_password}
     return {}
 
 
@@ -45,9 +57,15 @@ def _credentials() -> dict:
 # ---------------------------------------------------------------------------
 
 @router.post("/run")
-async def run_automation(request: RunRequest):
+async def run_automation(
+    request: RunRequest,
+    current_user: UserModel = Depends(get_current_user),  # noqa: ARG001
+):
     """
     Convert a plain English query into a live agentic browser automation.
+
+    Requires authentication — this endpoint drives a real browser and spends
+    LLM tokens, so it must never be publicly reachable.
 
     Example body:
     ```json
@@ -60,7 +78,7 @@ async def run_automation(request: RunRequest):
 
     agent = AutomationAgent(
         headless=request.headless,
-        credentials=_credentials(),
+        credentials=_credentials(request),
         max_steps=request.max_steps or settings.AGENT_MAX_STEPS,
     )
     try:
@@ -120,6 +138,18 @@ async def run_automation_live(websocket: WebSocket):
         {"type": "error",             "message": "..."}
     """
     await websocket.accept()
+
+    # Authenticate the socket via ?token= (browsers can't set WS headers).
+    db = SessionLocal()
+    try:
+        user = authenticate_token(websocket.query_params.get("token"), db)
+    finally:
+        db.close()
+    if user is None:
+        await websocket.send_json({"type": "error", "message": "Authentication required."})
+        await websocket.close(code=1008)
+        return
+
     send_lock = asyncio.Lock()
     closed = False
 
@@ -142,6 +172,10 @@ async def run_automation_live(websocket: WebSocket):
         url: Optional[str] = data.get("url") or None
         headless: bool = bool(data.get("headless", True))
         max_steps = data.get("max_steps")
+        # Credentials are per-run only (never from server-side .env).
+        ws_credentials = {}
+        if data.get("login_email") and data.get("login_password"):
+            ws_credentials = {"email": data["login_email"], "password": data["login_password"]}
 
         if not query:
             await send({"type": "error", "message": "query is required"})
@@ -149,7 +183,7 @@ async def run_automation_live(websocket: WebSocket):
 
         agent = AutomationAgent(
             headless=headless,
-            credentials=_credentials(),
+            credentials=ws_credentials,
             on_event=send,
             max_steps=int(max_steps) if max_steps else settings.AGENT_MAX_STEPS,
         )

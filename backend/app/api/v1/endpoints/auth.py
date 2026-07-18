@@ -1,12 +1,14 @@
 import re
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from datetime import timedelta
 
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.core.security import verify_password, get_password_hash, create_access_token, decode_access_token
 from app.core.config import settings
 from app.models.models import User as UserModel
@@ -44,8 +46,23 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
+
+def authenticate_token(token: Optional[str], db: Session) -> Optional[UserModel]:
+    """Resolve a raw JWT to a user, or None if invalid.
+
+    Used for WebSocket handshakes, where the browser WebSocket API cannot set
+    an Authorization header, so the token arrives as a `?token=` query param.
+    """
+    if not token:
+        return None
+    payload = decode_access_token(token)
+    if not payload or not payload.get("sub"):
+        return None
+    return db.query(UserModel).filter(UserModel.username == payload["sub"]).first()
+
 @router.post("/register", response_model=User)
-def register(user: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def register(request: Request, user: UserCreate, db: Session = Depends(get_db)):
     # Check if user exists
     db_user = db.query(UserModel).filter(UserModel.email == user.email).first()
     if db_user:
@@ -69,7 +86,8 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     return db_user
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     identifier = form_data.username
     user = db.query(UserModel).filter(
         or_(UserModel.username == identifier, UserModel.email == identifier)

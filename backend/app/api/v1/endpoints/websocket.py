@@ -2,9 +2,11 @@
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.websocket_manager import manager
+from app.automation.utils.logger import get_logger
 import json
 
 router = APIRouter()
+logger = get_logger("workflowpro.websocket")
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -38,5 +40,5 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.warning("WebSocket error: %s", e)
         manager.disconnect(websocket)

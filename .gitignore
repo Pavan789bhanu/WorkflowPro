@@ -49,12 +49,16 @@ storage_state.json
 # -----------------------------
 # Captured Dataset / Screenshots
 # -----------------------------
-# captured_dataset/
-# dataset_output/
-# **/captured_dataset/
-# **/dataset_output/
-# Runtime learning data mutated by the feedback API during test runs
-backend/captured_dataset/workflow_knowledge.json
+captured_dataset/
+dataset_output/
+**/captured_dataset/
+**/dataset_output/
+
+# -----------------------------
+# FUSE / filesystem cruft
+# -----------------------------
+.fuse_hidden*
+**/.fuse_hidden*
 
 # -----------------------------
 # Logs / Reports / Debug Dumps
@@ -118,5 +122,6 @@ data/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3

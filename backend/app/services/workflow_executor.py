@@ -16,12 +16,14 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.automation.agent.automation_agent import AutomationAgent, AgentResult
-from app.automation.utils.logger import log
 from app.services.websocket_manager import manager
 from app.models.models import Execution, Workflow, ExecutionStatus
 from app.core.database import SessionLocal
 from app.core.config import settings, APP_URL_MAPPINGS
 from app.core.encryption import resolve_stored_password
+from app.automation.utils.logger import get_logger
+
+logger = get_logger("workflowpro.executor")
 
 
 def _utcnow() -> datetime:
@@ -162,7 +164,7 @@ def _write_html_report(result: AgentResult, workflow_name: str) -> Optional[str]
 
 async def execute_workflow(execution_id: int, db: Session = None):
     """Execute a workflow using the AutomationAgent."""
-    log(f"[WORKFLOW EXECUTOR] Starting execution {execution_id}")
+    logger.info("Starting execution %s", execution_id)
 
     close_db = db is None
     db = db or SessionLocal()
@@ -170,7 +172,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
     try:
         execution = db.query(Execution).filter(Execution.id == execution_id).first()
         if not execution:
-            log(f"[WORKFLOW EXECUTOR] Execution {execution_id} not found")
+            logger.error("Execution %s not found", execution_id)
             return
 
         workflow = db.query(Workflow).filter(Workflow.id == execution.workflow_id).first()
@@ -181,7 +183,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
             db.commit()
             return
 
-        log(f"[WORKFLOW EXECUTOR] Executing workflow: {workflow.name} (ID: {workflow.id})")
+        logger.info("Executing workflow: %s (ID: %s)", workflow.name, workflow.id)
 
         execution.status = ExecutionStatus.RUNNING
         execution.started_at = _utcnow()
@@ -255,7 +257,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
         try:
             html_report = _write_html_report(result, workflow.name)
         except Exception as report_err:
-            log(f"[WORKFLOW EXECUTOR] HTML report failed: {report_err}")
+            logger.warning("HTML report generation failed: %s", report_err)
 
         execution.status = ExecutionStatus.SUCCESS if result.success else ExecutionStatus.FAILED
         execution.completed_at = _utcnow()
@@ -289,13 +291,15 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 "message": result.final_message,
             },
         )
-        log(
-            f"[WORKFLOW EXECUTOR] Execution {execution_id} "
-            f"{'succeeded' if result.success else 'failed'} in {duration}s"
+        logger.info(
+            "Execution %s %s in %ss",
+            execution_id,
+            "succeeded" if result.success else "failed",
+            duration,
         )
 
     except Exception as e:
-        log(f"[WORKFLOW EXECUTOR] Error executing workflow: {e}")
+        logger.exception("Error executing workflow %s: %s", execution_id, e)
         try:
             execution = db.query(Execution).filter(Execution.id == execution_id).first()
             if execution and execution.status not in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED):
@@ -305,7 +309,7 @@ async def execute_workflow(execution_id: int, db: Session = None):
                 execution.result = execution.result or json.dumps({"success": False, "error": str(e)})
                 db.commit()
         except Exception as db_error:
-            log(f"[WORKFLOW EXECUTOR] Error updating execution status: {db_error}")
+            logger.error("Error updating execution status: %s", db_error)
         raise
 
     finally:
