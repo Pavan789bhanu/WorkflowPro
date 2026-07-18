@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import sys
 
 _SECRET_PATTERNS = [
     (re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'), '[EMAIL]'),

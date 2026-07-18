@@ -16,7 +16,6 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.automation.agent.automation_agent import AutomationAgent, AgentResult
-from app.automation.utils.logger import log
 from app.services.websocket_manager import manager
 from app.models.models import Execution, Workflow, ExecutionStatus
 from app.core.database import SessionLocal
